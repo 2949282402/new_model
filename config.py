@@ -31,7 +31,7 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "lr": 1e-4,
         "weight_decay": 1e-4,
         "print_freq": 50,
-        "save_every": 1,
+        "save_every": 5,
         "amp": False,
         "aux_loss_weight": 0.5,
         "fusion_loss_weight": 0.1,

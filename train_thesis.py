@@ -387,7 +387,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=train_cfg["lr"])
     parser.add_argument("--weight_decay", type=float, default=train_cfg["weight_decay"])
     parser.add_argument("--print_freq", type=int, default=train_cfg["print_freq"])
-    parser.add_argument("--save_every", type=int, default=train_cfg["save_every"])
+    parser.add_argument(
+        "--save_every",
+        type=int,
+        default=train_cfg["save_every"],
+        help="Save epoch checkpoint every N epochs (latest.pth is still saved every epoch).",
+    )
     parser.add_argument("--seed", type=int, default=common_cfg["seed"])
 
     bool_action = getattr(argparse, "BooleanOptionalAction", None)
