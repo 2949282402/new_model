@@ -60,6 +60,8 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "cache_video_predictions": True,  # 是否开启视频级预测缓存（重复视频直接复用）
         "cache_dir": "./data/exp/thesis_stf/test_cache",  # 测试缓存根目录
         "refresh_cache": False,  # 是否忽略历史缓存并强制重算
+        "rgb_compress_quality": 0,  # 测试时 RGB 压缩质量：0 表示不压缩，1~100 表示 JPEG 质量
+        "rgb_compress_quality_choices": [0, 100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30],  # 可选压缩质量
         "fusion_mode": "",  # 测试时可选覆盖融合模式，空字符串表示沿用 checkpoint 配置
         "feature_dim": 0,  # 测试时可选覆盖特征维度，0 表示沿用 checkpoint 配置
         "hfri_mode": "",  # 测试时可选覆盖 HFRI 模式，空字符串表示沿用 checkpoint 配置

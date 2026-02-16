@@ -1,6 +1,7 @@
 import argparse
 import csv
 import hashlib
+import io
 import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -53,6 +54,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--real_dir_name", type=str, default=test_cfg["real_dir_name"])
     parser.add_argument("--fake_dir_name", type=str, default=test_cfg["fake_dir_name"])
     parser.add_argument("--cache_dir", type=str, default=test_cfg["cache_dir"])
+    rgb_q_choices = [int(x) for x in test_cfg.get("rgb_compress_quality_choices", [0, 100, 95, 90, 85, 80, 75, 70])]
+    parser.add_argument(
+        "--rgb_compress_quality",
+        type=int,
+        default=int(test_cfg.get("rgb_compress_quality", 0)),
+        choices=rgb_q_choices,
+        help="RGB JPEG compression quality for test. 0 means no compression, 1~100 means compressed.",
+    )
 
     bool_action = getattr(argparse, "BooleanOptionalAction", None)
     if bool_action is not None:
@@ -273,6 +282,7 @@ def build_cache_bucket(
     image_size: int,
     motion_stride: int,
     max_frames_per_video: int,
+    rgb_compress_quality: int,
 ) -> Path:
     ckpt_resolved = checkpoint.resolve()
     try:
@@ -291,6 +301,7 @@ def build_cache_bucket(
         "image_size": int(image_size),
         "motion_stride": int(motion_stride),
         "max_frames_per_video": int(max_frames_per_video),
+        "rgb_compress_quality": int(rgb_compress_quality),
     }
     sign_text = json.dumps(signature_obj, ensure_ascii=False, sort_keys=True)
     sign = hashlib.sha1(sign_text.encode("utf-8")).hexdigest()[:16]
@@ -333,10 +344,23 @@ def save_video_cache(cache_file: Path, payload: Dict) -> None:
 
 
 class InferencePairTransform:
-    def __init__(self, image_size: int):
+    def __init__(self, image_size: int, rgb_compress_quality: int = 0):
         self.image_size = int(image_size)
+        self.rgb_compress_quality = int(rgb_compress_quality)
+
+    @staticmethod
+    def _apply_jpeg_compression(img: Image.Image, quality: int) -> Image.Image:
+        q = max(1, min(100, int(quality)))
+        with io.BytesIO() as buf:
+            img.save(buf, format="JPEG", quality=q)
+            buf.seek(0)
+            out = Image.open(buf).convert("RGB")
+            return out.copy()
 
     def __call__(self, img1: Image.Image, img2: Image.Image) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self.rgb_compress_quality > 0:
+            img1 = self._apply_jpeg_compression(img1, self.rgb_compress_quality)
+            img2 = self._apply_jpeg_compression(img2, self.rgb_compress_quality)
         img1 = TF.resize(img1, [self.image_size, self.image_size], interpolation=InterpolationMode.BILINEAR)
         img2 = TF.resize(img2, [self.image_size, self.image_size], interpolation=InterpolationMode.BILINEAR)
         return TF.to_tensor(img1), TF.to_tensor(img2)
@@ -350,6 +374,7 @@ def infer_one_video(
     motion_stride: int,
     max_frames_per_video: int,
     batch_size: int,
+    rgb_compress_quality: int = 0,
 ) -> Dict:
     frames = list_image_files(video_dir)
     if max_frames_per_video > 0:
@@ -362,7 +387,7 @@ def infer_one_video(
             "video_prob": float("nan"),
         }
 
-    transform = InferencePairTransform(image_size=image_size)
+    transform = InferencePairTransform(image_size=image_size, rgb_compress_quality=rgb_compress_quality)
     n = len(frames)
     pairs: List[Tuple[Path, Path]] = []
     for i in range(n):
@@ -431,7 +456,7 @@ def main() -> None:
     )
     print(
         f"[Model] fusion_mode={model_args['fusion_mode']} feature_dim={model_args['feature_dim']} "
-        f"hfri_mode={model_args['hfri_mode']}"
+        f"hfri_mode={model_args['hfri_mode']} rgb_compress_quality={int(args.rgb_compress_quality)}"
     )
 
     data_root = Path(args.data_root)
@@ -461,6 +486,7 @@ def main() -> None:
             image_size=args.image_size,
             motion_stride=args.motion_stride,
             max_frames_per_video=args.max_frames_per_video,
+            rgb_compress_quality=args.rgb_compress_quality,
         )
         print(f"[Cache] bucket: {cache_bucket}")
 
@@ -515,6 +541,7 @@ def main() -> None:
                 motion_stride=args.motion_stride,
                 max_frames_per_video=args.max_frames_per_video,
                 batch_size=args.batch_size,
+                rgb_compress_quality=args.rgb_compress_quality,
             )
             mem_cache[key] = pred_obj
 
@@ -529,6 +556,7 @@ def main() -> None:
                         "frame_probs": pred_obj["frame_probs"],
                         "num_frames": int(pred_obj["num_frames"]),
                         "video_prob": float(pred_obj["video_prob"]),
+                        "rgb_compress_quality": int(args.rgb_compress_quality),
                     },
                 )
 
@@ -625,6 +653,7 @@ def main() -> None:
         "num_fake": int(n_fake),
         "num_real": int(n_real),
         "threshold": args.threshold,
+        "rgb_compress_quality": int(args.rgb_compress_quality),
         "cache_hit_mem": int(cache_hit_mem),
         "cache_hit_disk": int(cache_hit_disk),
         "cache_miss": int(cache_miss),
