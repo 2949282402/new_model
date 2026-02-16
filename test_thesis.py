@@ -516,9 +516,12 @@ def main() -> None:
     skipped_empty = 0
     cache_group_flush_count = 0
     cache_group_flush_videos = 0
+    real_repeat_total = 0
+    real_repeat_cache_hit = 0
 
     current_group_for_cache: Optional[str] = None
     pending_group_cache_entries: Dict[str, Dict] = {}
+    seen_real_keys: set = set()
 
     def flush_pending_group_cache(group_name: Optional[str]) -> None:
         nonlocal pending_group_cache_entries, cache_group_flush_count, cache_group_flush_videos
@@ -555,6 +558,9 @@ def main() -> None:
             role: str = sample["role"]
             label: int = int(sample["label"])
             key = str(video_dir.resolve()).lower()
+            is_repeated_real = (role == "real") and (key in seen_real_keys)
+            if is_repeated_real:
+                real_repeat_total += 1
 
             pred_obj: Optional[Dict] = None
             cache_hit_flag = 0
@@ -568,20 +574,28 @@ def main() -> None:
                     current_group_for_cache = group_model
 
             if args.cache_video_predictions:
-                if key in mem_cache and not args.refresh_cache:
+                # Always prioritize in-memory reuse for repeated videos.
+                if key in mem_cache:
                     pred_obj = mem_cache[key]
                     cache_hit_mem += 1
                     cache_hit_flag = 1
                 else:
                     assert cache_bucket is not None
                     cache_file = get_video_cache_file(cache_bucket, video_dir)
-                    if (not args.refresh_cache) and cache_file.exists():
+                    # Even when refresh_cache=True, repeated real videos must reuse cache.
+                    allow_disk_cache = (not args.refresh_cache) or is_repeated_real
+                    if allow_disk_cache and cache_file.exists():
                         cached = load_video_cache(cache_file)
                         if cached is not None:
                             pred_obj = cached
                             mem_cache[key] = cached
                             cache_hit_disk += 1
                             cache_hit_flag = 1
+
+            if is_repeated_real and pred_obj is None:
+                raise RuntimeError(
+                    f"[CachePolicy] Repeated real video must use cache, but cache miss occurred: {video_dir}"
+                )
 
             if pred_obj is None:
                 cache_miss += 1
@@ -612,6 +626,11 @@ def main() -> None:
                                 "rgb_compress_quality": int(args.rgb_compress_quality),
                             },
                         }
+            elif is_repeated_real and cache_hit_flag == 1:
+                real_repeat_cache_hit += 1
+
+            if role == "real":
+                seen_real_keys.add(key)
 
             frame_paths = pred_obj.get("frame_paths", [])
             frame_probs = [float(x) for x in pred_obj.get("frame_probs", [])]
@@ -699,6 +718,8 @@ def main() -> None:
         "cache_miss": int(cache_miss),
         "cache_group_flush_count": int(cache_group_flush_count),
         "cache_group_flush_videos": int(cache_group_flush_videos),
+        "real_repeat_total": int(real_repeat_total),
+        "real_repeat_cache_hit": int(real_repeat_cache_hit),
         "skipped_empty": int(skipped_empty),
     }
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
