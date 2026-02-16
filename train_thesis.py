@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import math
 import random
@@ -225,12 +226,14 @@ def evaluate(
     fusion_mode: str,
     aux_loss_weight: float,
     fusion_loss_weight: float,
-) -> Dict[str, float]:
+    threshold: float = 0.5,
+) -> Tuple[Dict[str, float], List[Dict], List[Dict]]:
     model.eval()
     losses: List[float] = []
     probs_all: List[float] = []
     labels_all: List[float] = []
     video_pool: Dict[str, List[Tuple[float, float]]] = {}
+    frame_rows: List[Dict] = []
 
     for batch in loader:
         img_spatial = batch["img_spatial"].to(device, non_blocking=True)
@@ -255,22 +258,41 @@ def evaluate(
         probs_all.extend(probs_np)
         labels_all.extend(labels_np)
 
-        for vid, p, y in zip(batch["video_id"], probs_np, labels_np):
+        for path, vid, p, y in zip(batch["path"], batch["video_id"], probs_np, labels_np):
             if vid not in video_pool:
                 video_pool[vid] = []
             video_pool[vid].append((float(p), float(y)))
+            frame_rows.append(
+                {
+                    "path": path,
+                    "video_id": vid,
+                    "label": int(y),
+                    "prob": float(p),
+                    "pred": int(float(p) >= threshold),
+                }
+            )
 
-    frame_preds = [1.0 if p >= 0.5 else 0.0 for p in probs_all]
+    frame_preds = [1.0 if p >= threshold else 0.0 for p in probs_all]
     frame_acc = float(np.mean([int(p == y) for p, y in zip(frame_preds, labels_all)])) if labels_all else 0.0
 
     video_probs: List[float] = []
     video_labels: List[float] = []
+    video_rows: List[Dict] = []
     for _, items in video_pool.items():
         p = float(np.mean([it[0] for it in items]))
         y = float(round(np.mean([it[1] for it in items])))
         video_probs.append(p)
         video_labels.append(y)
-    video_preds = [1.0 if p >= 0.5 else 0.0 for p in video_probs]
+        video_rows.append(
+            {
+                "video_id": _,
+                "label": int(y),
+                "prob": float(p),
+                "pred": int(float(p) >= threshold),
+                "num_frames": len(items),
+            }
+        )
+    video_preds = [1.0 if p >= threshold else 0.0 for p in video_probs]
     video_acc = float(np.mean([int(p == y) for p, y in zip(video_preds, video_labels)])) if video_labels else 0.0
 
     metrics: Dict[str, float] = {
@@ -301,7 +323,7 @@ def evaluate(
         metrics["video_auc"] = float("nan")
         metrics["video_ap"] = float("nan")
 
-    return metrics
+    return metrics, frame_rows, video_rows
 
 
 def is_finite_number(x: Optional[float]) -> bool:
@@ -366,6 +388,30 @@ def is_improved(
 def save_checkpoint(path: Path, payload: Dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, str(path))
+
+
+def save_val_prediction_cache(
+    save_dir: Path,
+    epoch: int,
+    frame_rows: List[Dict],
+    video_rows: List[Dict],
+) -> Tuple[Path, Path]:
+    cache_dir = save_dir / "val_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    frame_csv = cache_dir / f"epoch_{epoch:03d}_frame.csv"
+    with open(frame_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["path", "video_id", "label", "prob", "pred"])
+        writer.writeheader()
+        writer.writerows(frame_rows)
+
+    video_csv = cache_dir / f"epoch_{epoch:03d}_video.csv"
+    with open(video_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["video_id", "label", "prob", "pred", "num_frames"])
+        writer.writeheader()
+        writer.writerows(video_rows)
+
+    return frame_csv, video_csv
 
 
 def parse_args() -> argparse.Namespace:
@@ -443,6 +489,29 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=train_cfg["early_stop_min_delta"],
         help="Minimum metric improvement to reset patience.",
+    )
+    if bool_action is not None:
+        parser.add_argument(
+            "--cache_val_predictions",
+            action=bool_action,
+            default=train_cfg["cache_val_predictions"],
+            help="Cache validation prediction data to CSV for threshold searching.",
+        )
+    else:
+        parser.add_argument("--cache_val_predictions", dest="cache_val_predictions", action="store_true")
+        parser.add_argument("--no-cache_val_predictions", dest="cache_val_predictions", action="store_false")
+        parser.set_defaults(cache_val_predictions=train_cfg["cache_val_predictions"])
+    parser.add_argument(
+        "--cache_val_every",
+        type=int,
+        default=train_cfg["cache_val_every"],
+        help="Cache validation predictions every N validation epochs.",
+    )
+    parser.add_argument(
+        "--cache_val_threshold",
+        type=float,
+        default=train_cfg["cache_val_threshold"],
+        help="Threshold used to generate pred column in cached CSV.",
     )
 
     parser.add_argument("--flowformer_repo", type=str, default=model_cfg["flowformer_repo"])
@@ -606,12 +675,14 @@ def main() -> None:
         scheduler.step()
 
         val_metrics = None
+        val_frame_rows: List[Dict] = []
+        val_video_rows: List[Dict] = []
         monitor_value: Optional[float] = None
         monitor_name = "neg_train_loss"
         monitor_higher_is_better = True
 
         if val_loader is not None:
-            val_metrics = evaluate(
+            val_metrics, val_frame_rows, val_video_rows = evaluate(
                 model=model,
                 loader=val_loader,
                 device=device,
@@ -619,8 +690,8 @@ def main() -> None:
                 fusion_mode=args.fusion_mode,
                 aux_loss_weight=args.aux_loss_weight,
                 fusion_loss_weight=args.fusion_loss_weight,
+                threshold=args.cache_val_threshold,
             )
-            metric_for_best = val_metrics["video_acc"]
             print(
                 f"[Val][Epoch {epoch:03d}] "
                 f"loss={val_metrics['loss']:.4f} frame_acc={val_metrics['frame_acc']:.4f} "
@@ -630,6 +701,18 @@ def main() -> None:
             monitor_value, monitor_name, monitor_higher_is_better = select_monitor_value(
                 val_metrics, args.early_stop_metric
             )
+            if (
+                args.cache_val_predictions
+                and args.cache_val_every > 0
+                and (epoch % args.cache_val_every == 0)
+            ):
+                frame_csv, video_csv = save_val_prediction_cache(
+                    save_dir=save_dir,
+                    epoch=epoch,
+                    frame_rows=val_frame_rows,
+                    video_rows=val_video_rows,
+                )
+                print(f"[Cache] Saved validation predictions: {frame_csv} | {video_csv}")
         else:
             train_loss = running_loss / max(1, len(train_loader))
             monitor_value = -train_loss

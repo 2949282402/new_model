@@ -38,10 +38,13 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "early_stop_metric": "auc",  # options: auc, acc, loss
         "early_stop_patience": 5,
         "early_stop_min_delta": 0.0,
+        "cache_val_predictions": True,
+        "cache_val_every": 1,
+        "cache_val_threshold": 0.5,
     },
     "test": {
-        "checkpoint": "./runs/thesis_stf/best.pth",
-        "output_csv": "./runs/thesis_stf/test_frame_predictions.csv",
+        "checkpoint": "./data/exp/thesis_stf/best.pth",
+        "output_csv": "./data/exp/thesis_stf/test_frame_predictions.csv",
         "video_output_csv": "",
         "threshold": 0.5,
         "batch_size": 8,
