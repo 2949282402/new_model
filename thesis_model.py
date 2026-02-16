@@ -254,11 +254,13 @@ class MotionEncoder(nn.Module):
         out_dim: int = 512,
         flowformer_repo: str = "./FlowFormerPlusPlus-main",
         flowformer_ckpt: str = "./checkpoints/things.pth",
+        require_flowformer: bool = True,
     ):
         super().__init__()
         self.out_dim = out_dim
         self.flowformer_repo = flowformer_repo
         self.flowformer_ckpt = flowformer_ckpt  # fixed path required by thesis setting
+        self.require_flowformer = require_flowformer
 
         self.flowformer = None
         self.flowformer_token_dim = None
@@ -268,6 +270,11 @@ class MotionEncoder(nn.Module):
         if self.use_flowformer:
             self.align = nn.Linear(self.flowformer_token_dim, out_dim)
         else:
+            if self.require_flowformer:
+                raise RuntimeError(
+                    "FlowFormer is required but failed to initialize. "
+                    "Please check flowformer_repo and flowformer_ckpt."
+                )
             self.fallback = nn.Sequential(
                 nn.Conv2d(6, 64, kernel_size=7, stride=2, padding=3, bias=False),
                 nn.BatchNorm2d(64),
@@ -291,7 +298,10 @@ class MotionEncoder(nn.Module):
             ckpt_path = (Path(__file__).resolve().parent / ckpt_path).resolve()
 
         if not repo_path.exists():
-            warnings.warn(f"[MotionEncoder] FlowFormer repo not found: {repo_path}. Use fallback encoder.")
+            msg = f"[MotionEncoder] FlowFormer repo not found: {repo_path}."
+            if self.require_flowformer:
+                raise FileNotFoundError(msg)
+            warnings.warn(msg + " Use fallback encoder.")
             return
 
         sys.path.insert(0, str(repo_path))
@@ -324,10 +334,13 @@ class MotionEncoder(nn.Module):
                         "Will still run with randomly initialized FlowFormer weights."
                     )
             else:
-                warnings.warn(
+                msg = (
                     f"[MotionEncoder] FlowFormer checkpoint not found at {ckpt_path}. "
                     "Will run with randomly initialized FlowFormer weights."
                 )
+                if self.require_flowformer:
+                    raise FileNotFoundError(msg)
+                warnings.warn(msg)
 
             for p in model.parameters():
                 p.requires_grad = False
@@ -337,6 +350,8 @@ class MotionEncoder(nn.Module):
             self.flowformer_token_dim = token_dim
             self.use_flowformer = True
         except Exception as e:
+            if self.require_flowformer:
+                raise RuntimeError(f"[MotionEncoder] Failed to load FlowFormer: {e}") from e
             warnings.warn(f"[MotionEncoder] Failed to load FlowFormer ({e}). Use fallback encoder.")
             self.flowformer = None
             self.flowformer_token_dim = None
@@ -426,6 +441,7 @@ class Enhanced_STF_Detector(nn.Module):
         hfri_mode: str = "fft",
         flowformer_repo: str = "./FlowFormerPlusPlus-main",
         flowformer_ckpt: str = "./checkpoints/things.pth",
+        require_flowformer: bool = True,
     ):
         super().__init__()
         if fusion_mode not in {"cross_attention", "independent"}:
@@ -446,6 +462,7 @@ class Enhanced_STF_Detector(nn.Module):
             out_dim=feature_dim,
             flowformer_repo=flowformer_repo,
             flowformer_ckpt=flowformer_ckpt,
+            require_flowformer=require_flowformer,
         )
 
         if self.fusion_mode == "cross_attention":

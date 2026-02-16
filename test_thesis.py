@@ -55,6 +55,7 @@ def infer_model_args(test_args: argparse.Namespace, ckpt_cfg: Dict) -> Dict:
     fusion_mode = test_args.fusion_mode if test_args.fusion_mode else ckpt_cfg.get("fusion_mode", model_cfg["fusion_mode"])
     feature_dim = test_args.feature_dim if test_args.feature_dim > 0 else int(ckpt_cfg.get("feature_dim", model_cfg["feature_dim"]))
     hfri_mode = test_args.hfri_mode if test_args.hfri_mode else ckpt_cfg.get("hfri_mode", model_cfg["hfri_mode"])
+    require_flowformer = bool(ckpt_cfg.get("require_flowformer", model_cfg["require_flowformer"]))
     flowformer_repo = (
         test_args.flowformer_repo if test_args.flowformer_repo else ckpt_cfg.get("flowformer_repo", model_cfg["flowformer_repo"])
     )
@@ -66,6 +67,7 @@ def infer_model_args(test_args: argparse.Namespace, ckpt_cfg: Dict) -> Dict:
         "fusion_mode": fusion_mode,
         "feature_dim": feature_dim,
         "hfri_mode": hfri_mode,
+        "require_flowformer": require_flowformer,
         "flowformer_repo": flowformer_repo,
         "flowformer_ckpt": flowformer_ckpt,
     }
@@ -96,11 +98,12 @@ def main() -> None:
         fusion_mode=model_args["fusion_mode"],
         use_resnet_imagenet=False,
         hfri_mode=model_args["hfri_mode"],
+        require_flowformer=model_args["require_flowformer"],
         flowformer_repo=model_args["flowformer_repo"],
         flowformer_ckpt=model_args["flowformer_ckpt"],
     ).to(device)
 
-    load_msg = model.load_state_dict(state_dict, strict=False)
+    load_msg = model.load_state_dict(state_dict, strict=True)
     print(
         f"[Checkpoint] loaded from {args.checkpoint}\n"
         f"  missing_keys={len(load_msg.missing_keys)} unexpected_keys={len(load_msg.unexpected_keys)}"

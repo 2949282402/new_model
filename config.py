@@ -21,6 +21,7 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "hfri_mode": "fft",  # options: fft, dct
         "flowformer_repo": "./FlowFormerPlusPlus-main",
         "flowformer_ckpt": "./checkpoints/things.pth",
+        "require_flowformer": True,
     },
     "train": {
         "save_dir": "./data/exp/thesis_stf",

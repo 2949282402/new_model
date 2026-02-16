@@ -138,23 +138,13 @@ class DeepfakePairDataset(Dataset):
                 video_id = f"{class_dir.name}/{video_dir.name}"
                 n = len(frames)
                 for i, frame_i in enumerate(frames):
-                    if n == 1:
-                        j = 0
-                    elif self.split == "train":
-                        max_j = min(n - 1, i + self.motion_stride)
-                        if max_j <= i:
-                            j = n - 1
-                        else:
-                            j = random.randint(i + 1, max_j)
-                    else:
-                        j = min(n - 1, i + self.motion_stride)
-
                     samples.append(
                         {
-                            "img1": frame_i,
-                            "img2": frames[j],
+                            "frames": frames,
+                            "idx1": i,
                             "label": float(label),
                             "video_id": video_id,
+                            "path": str(frame_i),
                         }
                     )
 
@@ -167,8 +157,23 @@ class DeepfakePairDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Dict:
         sample = self.samples[idx]
-        img1 = Image.open(sample["img1"]).convert("RGB")
-        img2 = Image.open(sample["img2"]).convert("RGB")
+        frames: List[Path] = sample["frames"]
+        i = int(sample["idx1"])
+        n = len(frames)
+
+        if n == 1:
+            j = 0
+        elif self.split == "train":
+            max_j = min(n - 1, i + self.motion_stride)
+            if max_j <= i:
+                j = n - 1
+            else:
+                j = random.randint(i + 1, max_j)
+        else:
+            j = min(n - 1, i + self.motion_stride)
+
+        img1 = Image.open(frames[i]).convert("RGB")
+        img2 = Image.open(frames[j]).convert("RGB")
         x1, x2 = self.transform(img1, img2)
 
         return {
@@ -177,7 +182,7 @@ class DeepfakePairDataset(Dataset):
             "img_motion_2": x2,  # [3,H,W]
             "label": torch.tensor(sample["label"], dtype=torch.float32),  # []
             "video_id": sample["video_id"],
-            "path": str(sample["img1"]),
+            "path": sample["path"],
         }
 
 
@@ -467,6 +472,17 @@ def parse_args() -> argparse.Namespace:
         parser.add_argument("--use_resnet_imagenet", dest="use_resnet_imagenet", action="store_true")
         parser.add_argument("--no-use_resnet_imagenet", dest="use_resnet_imagenet", action="store_false")
         parser.set_defaults(use_resnet_imagenet=model_cfg["use_resnet_imagenet"])
+    if bool_action is not None:
+        parser.add_argument(
+            "--require_flowformer",
+            action=bool_action,
+            default=model_cfg["require_flowformer"],
+            help="Require FlowFormer to load successfully; otherwise raise error.",
+        )
+    else:
+        parser.add_argument("--require_flowformer", dest="require_flowformer", action="store_true")
+        parser.add_argument("--no-require_flowformer", dest="require_flowformer", action="store_false")
+        parser.set_defaults(require_flowformer=model_cfg["require_flowformer"])
 
     parser.add_argument("--hfri_mode", type=str, default=model_cfg["hfri_mode"], choices=["fft", "dct"])
     parser.add_argument("--aux_loss_weight", type=float, default=train_cfg["aux_loss_weight"])
@@ -572,6 +588,7 @@ def main() -> None:
         hfri_mode=args.hfri_mode,
         flowformer_repo=args.flowformer_repo,
         flowformer_ckpt=args.flowformer_ckpt,
+        require_flowformer=args.require_flowformer,
     ).to(device)
 
     criterion = nn.BCEWithLogitsLoss()
@@ -590,7 +607,7 @@ def main() -> None:
     if args.resume:
         ckpt = torch.load(args.resume, map_location="cpu")
         state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
-        model.load_state_dict(state_dict, strict=False)
+        model.load_state_dict(state_dict, strict=True)
         if isinstance(ckpt, dict):
             if "optimizer" in ckpt:
                 optimizer.load_state_dict(ckpt["optimizer"])
