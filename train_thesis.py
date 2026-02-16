@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import random
 from contextlib import nullcontext
 from pathlib import Path
@@ -303,6 +304,65 @@ def evaluate(
     return metrics
 
 
+def is_finite_number(x: Optional[float]) -> bool:
+    if x is None:
+        return False
+    try:
+        return math.isfinite(float(x))
+    except Exception:
+        return False
+
+
+def select_monitor_value(val_metrics: Dict[str, float], metric: str) -> Tuple[Optional[float], str, bool]:
+    """
+    Returns:
+        monitor_value, monitor_name, higher_is_better
+    """
+    if metric == "loss":
+        value = val_metrics.get("loss", float("nan"))
+        return (float(value) if is_finite_number(value) else None), "loss", False
+
+    if metric == "acc":
+        video_acc = val_metrics.get("video_acc", float("nan"))
+        if is_finite_number(video_acc):
+            return float(video_acc), "video_acc", True
+        frame_acc = val_metrics.get("frame_acc", float("nan"))
+        if is_finite_number(frame_acc):
+            return float(frame_acc), "frame_acc", True
+        return None, "acc", True
+
+    # default: auc
+    video_auc = val_metrics.get("video_auc", float("nan"))
+    if is_finite_number(video_auc):
+        return float(video_auc), "video_auc", True
+    frame_auc = val_metrics.get("frame_auc", float("nan"))
+    if is_finite_number(frame_auc):
+        return float(frame_auc), "frame_auc", True
+
+    # AUC is undefined on single-class validation set; fallback to ACC.
+    video_acc = val_metrics.get("video_acc", float("nan"))
+    if is_finite_number(video_acc):
+        return float(video_acc), "video_acc(fallback_from_auc)", True
+    frame_acc = val_metrics.get("frame_acc", float("nan"))
+    if is_finite_number(frame_acc):
+        return float(frame_acc), "frame_acc(fallback_from_auc)", True
+
+    return None, "auc", True
+
+
+def is_improved(
+    current: float,
+    best: Optional[float],
+    higher_is_better: bool,
+    min_delta: float,
+) -> bool:
+    if best is None:
+        return True
+    if higher_is_better:
+        return current > (best + min_delta)
+    return current < (best - min_delta)
+
+
 def save_checkpoint(path: Path, payload: Dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, str(path))
@@ -360,6 +420,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hfri_mode", type=str, default=model_cfg["hfri_mode"], choices=["fft", "dct"])
     parser.add_argument("--aux_loss_weight", type=float, default=train_cfg["aux_loss_weight"])
     parser.add_argument("--fusion_loss_weight", type=float, default=train_cfg["fusion_loss_weight"])
+    parser.add_argument(
+        "--early_stop_metric",
+        type=str,
+        default=train_cfg["early_stop_metric"],
+        choices=["auc", "acc", "loss"],
+        help="Validation metric for early stopping.",
+    )
+    parser.add_argument(
+        "--early_stop_patience",
+        type=int,
+        default=train_cfg["early_stop_patience"],
+        help="Stop if no improvement for this many consecutive validation epochs.",
+    )
+    parser.add_argument(
+        "--early_stop_min_delta",
+        type=float,
+        default=train_cfg["early_stop_min_delta"],
+        help="Minimum metric improvement to reset patience.",
+    )
 
     parser.add_argument("--flowformer_repo", type=str, default=model_cfg["flowformer_repo"])
     parser.add_argument("--flowformer_ckpt", type=str, default=model_cfg["flowformer_ckpt"])
@@ -427,7 +506,10 @@ def main() -> None:
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     start_epoch = 1
-    best_metric = -1.0
+    best_metric: Optional[float] = None
+    best_metric_name = ""
+    best_metric_higher_is_better = True
+    early_stop_wait = 0
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -443,11 +525,32 @@ def main() -> None:
             if "scaler" in ckpt and use_amp:
                 scaler.load_state_dict(ckpt["scaler"])
             start_epoch = int(ckpt.get("epoch", 0)) + 1
-            best_metric = float(ckpt.get("best_metric", -1.0))
-        print(f"[Resume] from {args.resume}, start_epoch={start_epoch}, best_metric={best_metric:.4f}")
+            if "best_metric" in ckpt and ckpt["best_metric"] is not None:
+                try:
+                    best_metric = float(ckpt["best_metric"])
+                except Exception:
+                    best_metric = None
+            best_metric_name = str(ckpt.get("best_metric_name", best_metric_name))
+            best_metric_higher_is_better = bool(
+                ckpt.get("best_metric_higher_is_better", best_metric_higher_is_better)
+            )
+            early_stop_wait = int(ckpt.get("early_stop_wait", 0))
+
+        best_metric_str = f"{best_metric:.4f}" if best_metric is not None else "None"
+        print(
+            f"[Resume] from {args.resume}, start_epoch={start_epoch}, "
+            f"best_metric={best_metric_str}, wait={early_stop_wait}"
+        )
 
     with open(save_dir / "train_args.json", "w", encoding="utf-8") as f:
         json.dump(vars(args), f, ensure_ascii=False, indent=2)
+
+    if val_loader is None:
+        print("[EarlyStop] Validation set is not provided. Early stopping is disabled.")
+
+    if args.early_stop_metric == "loss" and best_metric is not None and best_metric < 0:
+        # Compatibility with older checkpoints that initialized best_metric as -1.
+        best_metric = None
 
     for epoch in range(start_epoch, args.epochs + 1):
         model.train()
@@ -498,7 +601,10 @@ def main() -> None:
         scheduler.step()
 
         val_metrics = None
-        metric_for_best = -running_loss / max(1, len(train_loader))
+        monitor_value: Optional[float] = None
+        monitor_name = "neg_train_loss"
+        monitor_higher_is_better = True
+
         if val_loader is not None:
             val_metrics = evaluate(
                 model=model,
@@ -516,6 +622,41 @@ def main() -> None:
                 f"video_acc={val_metrics['video_acc']:.4f} frame_auc={val_metrics['frame_auc']:.4f} "
                 f"video_auc={val_metrics['video_auc']:.4f}"
             )
+            monitor_value, monitor_name, monitor_higher_is_better = select_monitor_value(
+                val_metrics, args.early_stop_metric
+            )
+        else:
+            train_loss = running_loss / max(1, len(train_loader))
+            monitor_value = -train_loss
+            monitor_name = "neg_train_loss"
+            monitor_higher_is_better = True
+
+        if monitor_value is not None:
+            improved = is_improved(
+                current=monitor_value,
+                best=best_metric,
+                higher_is_better=monitor_higher_is_better,
+                min_delta=args.early_stop_min_delta,
+            )
+        else:
+            improved = False
+
+        if improved:
+            best_metric = monitor_value
+            best_metric_name = monitor_name
+            best_metric_higher_is_better = monitor_higher_is_better
+            early_stop_wait = 0
+            best_metric_str = f"{best_metric:.6f}" if best_metric is not None else "None"
+            print(f"[Best] Updated best {best_metric_name}: {best_metric_str}")
+        elif val_loader is not None:
+            early_stop_wait += 1
+            current_str = "None" if monitor_value is None else f"{monitor_value:.6f}"
+            best_str = "None" if best_metric is None else f"{best_metric:.6f}"
+            print(
+                f"[EarlyStop] No improvement on {monitor_name}. "
+                f"current={current_str}, best={best_str}, "
+                f"wait={early_stop_wait}/{args.early_stop_patience}"
+            )
 
         ckpt_payload = {
             "epoch": epoch,
@@ -524,6 +665,9 @@ def main() -> None:
             "scheduler": scheduler.state_dict(),
             "scaler": scaler.state_dict() if use_amp else {},
             "best_metric": best_metric,
+            "best_metric_name": best_metric_name,
+            "best_metric_higher_is_better": best_metric_higher_is_better,
+            "early_stop_wait": early_stop_wait,
             "config": vars(args),
             "val_metrics": val_metrics,
         }
@@ -532,13 +676,20 @@ def main() -> None:
             save_checkpoint(save_dir / f"epoch_{epoch:03d}.pth", ckpt_payload)
         save_checkpoint(save_dir / "latest.pth", ckpt_payload)
 
-        if metric_for_best > best_metric:
-            best_metric = metric_for_best
-            ckpt_payload["best_metric"] = best_metric
+        if improved:
             save_checkpoint(save_dir / "best.pth", ckpt_payload)
-            print(f"[Best] Updated best metric: {best_metric:.4f}")
+        if val_loader is not None and args.early_stop_patience > 0 and early_stop_wait >= args.early_stop_patience:
+            print(
+                f"[EarlyStop] Triggered at epoch {epoch}. "
+                f"Metric={monitor_name}, patience={args.early_stop_patience}."
+            )
+            break
 
-    print(f"Training finished. Best metric={best_metric:.4f}. Checkpoints in: {save_dir}")
+    best_metric_str = f"{best_metric:.6f}" if best_metric is not None else "None"
+    print(
+        f"Training finished. Best {best_metric_name or 'metric'}={best_metric_str}. "
+        f"Checkpoints in: {save_dir}"
+    )
 
 
 if __name__ == "__main__":

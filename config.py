@@ -35,6 +35,9 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "amp": False,
         "aux_loss_weight": 0.5,
         "fusion_loss_weight": 0.1,
+        "early_stop_metric": "auc",  # options: auc, acc, loss
+        "early_stop_patience": 5,
+        "early_stop_min_delta": 0.0,
     },
     "test": {
         "checkpoint": "./runs/thesis_stf/best.pth",
@@ -57,4 +60,3 @@ def get_section(section: str) -> Dict[str, Any]:
     if section not in cfg:
         raise KeyError(f"Unknown config section: {section}")
     return cfg[section]
-
