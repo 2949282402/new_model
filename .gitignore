@@ -3,3 +3,5 @@ data
 
 # 忽略checkpoints下的文件
 FlowFormerPlusPlus-main/checkpoints
+
+checkpoints/

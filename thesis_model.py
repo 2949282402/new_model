@@ -14,6 +14,18 @@ except Exception:  # pragma: no cover - fallback for old torchvision
     from torchvision.models import resnet50
 
 
+def _torch_load_compat(path: str, map_location: str = "cpu", weights_only: Optional[bool] = None):
+    kwargs = {"map_location": map_location}
+    if weights_only is not None:
+        kwargs["weights_only"] = weights_only
+    try:
+        return torch.load(path, **kwargs)
+    except TypeError:
+        # Older torch versions do not support weights_only.
+        kwargs.pop("weights_only", None)
+        return torch.load(path, **kwargs)
+
+
 class HFRI(nn.Module):
     """
     High-Frequency Residual Injection.
@@ -316,7 +328,7 @@ class MotionEncoder(nn.Module):
             token_dim = int(cfg[cfg.transformer].cost_latent_dim)
 
             if ckpt_path.exists():
-                raw_state = torch.load(str(ckpt_path), map_location="cpu")
+                raw_state = _torch_load_compat(str(ckpt_path), map_location="cpu", weights_only=True)
                 if isinstance(raw_state, dict) and "state_dict" in raw_state:
                     raw_state = raw_state["state_dict"]
                 if isinstance(raw_state, dict) and "model" in raw_state:

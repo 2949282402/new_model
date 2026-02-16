@@ -21,6 +21,17 @@ from thesis_model import Enhanced_STF_Detector
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
+def _torch_load_compat(path: str, map_location: str = "cpu", weights_only: Optional[bool] = None):
+    kwargs = {"map_location": map_location}
+    if weights_only is not None:
+        kwargs["weights_only"] = weights_only
+    try:
+        return torch.load(path, **kwargs)
+    except TypeError:
+        kwargs.pop("weights_only", None)
+        return torch.load(path, **kwargs)
+
+
 def seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -594,7 +605,10 @@ def main() -> None:
     criterion = nn.BCEWithLogitsLoss()
     optimizer = build_optimizer(model, lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, args.epochs))
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    else:
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     start_epoch = 1
     best_metric: Optional[float] = None
@@ -605,7 +619,7 @@ def main() -> None:
     save_dir.mkdir(parents=True, exist_ok=True)
 
     if args.resume:
-        ckpt = torch.load(args.resume, map_location="cpu")
+        ckpt = _torch_load_compat(args.resume, map_location="cpu", weights_only=False)
         state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
         model.load_state_dict(state_dict, strict=True)
         if isinstance(ckpt, dict):
@@ -657,8 +671,15 @@ def main() -> None:
             labels = batch["label"].to(device, non_blocking=True).unsqueeze(1)  # [B,1]
 
             optimizer.zero_grad(set_to_none=True)
-            amp_ctx = torch.cuda.amp.autocast if use_amp else nullcontext
-            with amp_ctx():
+            if use_amp:
+                if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+                    amp_ctx = torch.amp.autocast(device_type="cuda", enabled=True)
+                else:
+                    amp_ctx = torch.cuda.amp.autocast(enabled=True)
+            else:
+                amp_ctx = nullcontext()
+
+            with amp_ctx:
                 outputs = model(img_spatial, img_motion_1, img_motion_2)
                 loss, parts = compute_losses(
                     outputs=outputs,

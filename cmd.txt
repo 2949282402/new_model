@@ -1,0 +1,10 @@
+# 1) 创建环境
+conda create -n thesis_stf python=3.10 -y
+conda activate thesis_stf
+
+# 2) 安装 PyTorch (GPU, CUDA 12.4)
+pip install --upgrade pip setuptools wheel
+pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+
+# 3) 安装项目通用依赖（你这个融合工程需要）
+pip install yacs loguru einops timm==0.4.12 imageio matplotlib tensorboard scipy opencv-python numpy pandas scikit-learn tqdm pillow gdown blobfile>=1.0.5 tensorboardX ipympl attrs

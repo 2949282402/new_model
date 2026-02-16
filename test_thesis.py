@@ -13,6 +13,15 @@ from thesis_model import Enhanced_STF_Detector
 from train_thesis import DeepfakePairDataset
 
 
+def _torch_load_compat(path: str, map_location: str = "cpu", weights_only: bool = False):
+    kwargs = {"map_location": map_location, "weights_only": weights_only}
+    try:
+        return torch.load(path, **kwargs)
+    except TypeError:
+        kwargs.pop("weights_only", None)
+        return torch.load(path, **kwargs)
+
+
 def parse_args() -> argparse.Namespace:
     cfg = get_default_config()
     data_cfg = cfg["data"]
@@ -88,7 +97,7 @@ def main() -> None:
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    ckpt = torch.load(args.checkpoint, map_location="cpu")
+    ckpt = _torch_load_compat(args.checkpoint, map_location="cpu", weights_only=False)
     state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
     ckpt_cfg = ckpt.get("config", {}) if isinstance(ckpt, dict) else {}
 
