@@ -17,23 +17,25 @@ from pathlib import Path
 from typing import List, Tuple
 
 import cv2
+from config import get_default_config
 
+_CFG = get_default_config()
+_COMMON_CFG = _CFG["common"]
+_PROCESS_CFG = _CFG["process"]
 
-VIDEO_EXTS = {
-    ".mp4",
-    ".avi",
-    ".mov",
-    ".mkv",
-    ".wmv",
-    ".flv",
-    ".webm",
-    ".m4v",
-    ".mpg",
-    ".mpeg",
-}
+VIDEO_EXTS = {str(x).lower() for x in _COMMON_CFG.get("video_exts", [])}
+if not VIDEO_EXTS:
+    VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg"}
+
+IMAGE_EXT_CHOICES = [str(x).lower() for x in _PROCESS_CFG.get("image_ext_choices", ["jpg", "png"])]
+if not IMAGE_EXT_CHOICES:
+    IMAGE_EXT_CHOICES = ["jpg", "png"]
 
 
 def parse_args() -> argparse.Namespace:
+    cfg = get_default_config()
+    process_cfg = cfg["process"]
+
     parser = argparse.ArgumentParser(
         description="Recursively find videos and extract frames while keeping directory structure."
     )
@@ -41,14 +43,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output_root",
         type=str,
-        default="",
+        default=process_cfg["output_root"],
         help="Output root for extracted frames. Default: <input_root>_frames",
     )
-    parser.add_argument("--image_ext", type=str, default="jpg", choices=["jpg", "png"], help="Frame image format.")
-    parser.add_argument("--jpg_quality", type=int, default=95, help="JPEG quality [1,100].")
-    parser.add_argument("--zero_pad", type=int, default=5, help="Frame index zero padding width.")
-    parser.add_argument("--every_n", type=int, default=1, help="Keep one frame every N frames.")
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing extracted frame folders.")
+    parser.add_argument(
+        "--image_ext",
+        type=str,
+        default=process_cfg["image_ext"],
+        choices=IMAGE_EXT_CHOICES,
+        help="Frame image format.",
+    )
+    parser.add_argument("--jpg_quality", type=int, default=process_cfg["jpg_quality"], help="JPEG quality [1,100].")
+    parser.add_argument("--zero_pad", type=int, default=process_cfg["zero_pad"], help="Frame index zero padding width.")
+    parser.add_argument("--every_n", type=int, default=process_cfg["every_n"], help="Keep one frame every N frames.")
+
+    bool_action = getattr(argparse, "BooleanOptionalAction", None)
+    if bool_action is not None:
+        parser.add_argument("--overwrite", action=bool_action, default=process_cfg["overwrite"], help="Overwrite existing extracted frame folders.")
+    else:
+        parser.add_argument("--overwrite", dest="overwrite", action="store_true")
+        parser.add_argument("--no-overwrite", dest="overwrite", action="store_false")
+        parser.set_defaults(overwrite=process_cfg["overwrite"])
     return parser.parse_args()
 
 

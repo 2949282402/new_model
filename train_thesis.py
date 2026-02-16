@@ -18,7 +18,13 @@ from torchvision.transforms import functional as TF
 from config import get_default_config
 from thesis_model import Enhanced_STF_Detector
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+_CFG = get_default_config()
+_COMMON_CFG = _CFG["common"]
+_DATA_CFG = _CFG["data"]
+
+IMAGE_EXTS = {str(x).lower() for x in _COMMON_CFG.get("image_exts", [".jpg", ".jpeg", ".png", ".bmp", ".webp"])}
+REAL_CLASS_NAMES = [str(x).lower() for x in _DATA_CFG.get("real_class_names", ["0_real", "real"])]
+FAKE_CLASS_NAMES = [str(x).lower() for x in _DATA_CFG.get("fake_class_names", ["1_fake", "fake"])]
 
 
 def _torch_load_compat(path: str, map_location: str = "cpu", weights_only: Optional[bool] = None):
@@ -52,12 +58,11 @@ def infer_class_dirs(root: Path) -> List[Tuple[Path, int]]:
     if not candidates:
         raise RuntimeError(f"No class directories found in {root}")
 
-    mapping: Dict[str, int] = {
-        "0_real": 0,
-        "real": 0,
-        "1_fake": 1,
-        "fake": 1,
-    }
+    mapping: Dict[str, int] = {}
+    for name in REAL_CLASS_NAMES:
+        mapping[name] = 0
+    for name in FAKE_CLASS_NAMES:
+        mapping[name] = 1
     out: List[Tuple[Path, int]] = []
 
     for d in candidates:
@@ -71,8 +76,10 @@ def infer_class_dirs(root: Path) -> List[Tuple[Path, int]]:
     # fallback: two folders by alphabetical order
     candidates = sorted(candidates, key=lambda x: x.name.lower())
     if len(candidates) != 2:
+        real_hint = "/".join(REAL_CLASS_NAMES) if REAL_CLASS_NAMES else "0_real/real"
+        fake_hint = "/".join(FAKE_CLASS_NAMES) if FAKE_CLASS_NAMES else "1_fake/fake"
         raise RuntimeError(
-            "Unable to infer labels. Use class dirs named 0_real/1_fake (or real/fake), "
+            f"Unable to infer labels. Use class dirs named one of [{real_hint}] / [{fake_hint}], "
             f"or provide exactly two class folders. Got {len(candidates)}."
         )
     return [(candidates[0], 0), (candidates[1], 1)]
