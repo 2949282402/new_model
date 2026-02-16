@@ -490,107 +490,160 @@ def main() -> None:
         )
         print(f"[Cache] bucket: {cache_bucket}")
 
+    out_csv = Path(args.output_csv)
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    if args.video_output_csv:
+        video_csv = Path(args.video_output_csv)
+    else:
+        video_csv = out_csv.with_name(out_csv.stem + "_video.csv")
+    video_csv.parent.mkdir(parents=True, exist_ok=True)
+
+    frame_fieldnames = ["path", "video_id", "source_video", "group_model", "role", "label", "prob", "pred", "cache_hit"]
+    video_fieldnames = ["video_id", "source_video", "group_model", "role", "label", "prob", "pred", "num_frames", "cache_hit"]
+
     model.eval()
-    frame_rows: List[Dict] = []
-    video_rows: List[Dict] = []
     frame_probs_all: List[float] = []
     frame_labels_all: List[float] = []
     video_probs_all: List[float] = []
     video_labels_all: List[float] = []
+    num_frames_written = 0
+    num_videos_written = 0
 
     mem_cache: Dict[str, Dict] = {}
     cache_hit_mem = 0
     cache_hit_disk = 0
     cache_miss = 0
     skipped_empty = 0
+    cache_group_flush_count = 0
+    cache_group_flush_videos = 0
 
-    for i, sample in enumerate(plan, start=1):
-        video_dir: Path = sample["video_dir"]
-        sample_id: str = sample["sample_id"]
-        group_model: str = sample["group_model"]
-        role: str = sample["role"]
-        label: int = int(sample["label"])
-        key = str(video_dir.resolve()).lower()
+    current_group_for_cache: Optional[str] = None
+    pending_group_cache_entries: Dict[str, Dict] = {}
 
-        pred_obj: Optional[Dict] = None
-        cache_hit_flag = 0
+    def flush_pending_group_cache(group_name: Optional[str]) -> None:
+        nonlocal pending_group_cache_entries, cache_group_flush_count, cache_group_flush_videos
+        if not args.cache_video_predictions:
+            return
+        if group_name is None:
+            return
+        if not pending_group_cache_entries:
+            return
+        assert cache_bucket is not None
+        for entry in pending_group_cache_entries.values():
+            cache_file = get_video_cache_file(cache_bucket, entry["video_dir"])
+            save_video_cache(cache_file=cache_file, payload=entry["payload"])
+        flushed = len(pending_group_cache_entries)
+        cache_group_flush_count += 1
+        cache_group_flush_videos += flushed
+        print(f"[Cache] flushed group={group_name} videos={flushed}")
+        pending_group_cache_entries = {}
 
-        if args.cache_video_predictions:
-            if key in mem_cache and not args.refresh_cache:
-                pred_obj = mem_cache[key]
-                cache_hit_mem += 1
-                cache_hit_flag = 1
-            else:
-                assert cache_bucket is not None
-                cache_file = get_video_cache_file(cache_bucket, video_dir)
-                if (not args.refresh_cache) and cache_file.exists():
-                    cached = load_video_cache(cache_file)
-                    if cached is not None:
-                        pred_obj = cached
-                        mem_cache[key] = cached
-                        cache_hit_disk += 1
-                        cache_hit_flag = 1
+    with open(out_csv, "w", newline="", encoding="utf-8") as frame_f, open(
+        video_csv, "w", newline="", encoding="utf-8"
+    ) as video_f:
+        frame_writer = csv.DictWriter(frame_f, fieldnames=frame_fieldnames)
+        video_writer = csv.DictWriter(video_f, fieldnames=video_fieldnames)
+        frame_writer.writeheader()
+        video_writer.writeheader()
+        frame_f.flush()
+        video_f.flush()
 
-        if pred_obj is None:
-            cache_miss += 1
-            pred_obj = infer_one_video(
-                model=model,
-                device=device,
-                video_dir=video_dir,
-                image_size=args.image_size,
-                motion_stride=args.motion_stride,
-                max_frames_per_video=args.max_frames_per_video,
-                batch_size=args.batch_size,
-                rgb_compress_quality=args.rgb_compress_quality,
-            )
-            mem_cache[key] = pred_obj
+        for i, sample in enumerate(plan, start=1):
+            video_dir: Path = sample["video_dir"]
+            sample_id: str = sample["sample_id"]
+            group_model: str = sample["group_model"]
+            role: str = sample["role"]
+            label: int = int(sample["label"])
+            key = str(video_dir.resolve()).lower()
+
+            pred_obj: Optional[Dict] = None
+            cache_hit_flag = 0
 
             if args.cache_video_predictions:
-                assert cache_bucket is not None
-                cache_file = get_video_cache_file(cache_bucket, video_dir)
-                save_video_cache(
-                    cache_file=cache_file,
-                    payload={
-                        "video_dir": str(video_dir.resolve()),
-                        "frame_paths": pred_obj["frame_paths"],
-                        "frame_probs": pred_obj["frame_probs"],
-                        "num_frames": int(pred_obj["num_frames"]),
-                        "video_prob": float(pred_obj["video_prob"]),
-                        "rgb_compress_quality": int(args.rgb_compress_quality),
-                    },
+                if current_group_for_cache is None:
+                    current_group_for_cache = group_model
+                elif group_model != current_group_for_cache:
+                    # Delay disk writes until one generator-model group finishes.
+                    flush_pending_group_cache(current_group_for_cache)
+                    current_group_for_cache = group_model
+
+            if args.cache_video_predictions:
+                if key in mem_cache and not args.refresh_cache:
+                    pred_obj = mem_cache[key]
+                    cache_hit_mem += 1
+                    cache_hit_flag = 1
+                else:
+                    assert cache_bucket is not None
+                    cache_file = get_video_cache_file(cache_bucket, video_dir)
+                    if (not args.refresh_cache) and cache_file.exists():
+                        cached = load_video_cache(cache_file)
+                        if cached is not None:
+                            pred_obj = cached
+                            mem_cache[key] = cached
+                            cache_hit_disk += 1
+                            cache_hit_flag = 1
+
+            if pred_obj is None:
+                cache_miss += 1
+                pred_obj = infer_one_video(
+                    model=model,
+                    device=device,
+                    video_dir=video_dir,
+                    image_size=args.image_size,
+                    motion_stride=args.motion_stride,
+                    max_frames_per_video=args.max_frames_per_video,
+                    batch_size=args.batch_size,
+                    rgb_compress_quality=args.rgb_compress_quality,
                 )
+                mem_cache[key] = pred_obj
 
-        frame_paths = pred_obj.get("frame_paths", [])
-        frame_probs = [float(x) for x in pred_obj.get("frame_probs", [])]
-        num_frames = int(pred_obj.get("num_frames", len(frame_probs)))
-        video_prob = float(pred_obj.get("video_prob", float("nan")))
-        video_pred = int(video_prob >= args.threshold) if np.isfinite(video_prob) else 0
-        source_video = str(video_dir.resolve())
+                if args.cache_video_predictions:
+                    # Keep per-video cache in memory immediately.
+                    # Write to disk later when current group_model is fully processed.
+                    if key not in pending_group_cache_entries:
+                        pending_group_cache_entries[key] = {
+                            "video_dir": video_dir,
+                            "payload": {
+                                "video_dir": str(video_dir.resolve()),
+                                "frame_paths": pred_obj["frame_paths"],
+                                "frame_probs": pred_obj["frame_probs"],
+                                "num_frames": int(pred_obj["num_frames"]),
+                                "video_prob": float(pred_obj["video_prob"]),
+                                "rgb_compress_quality": int(args.rgb_compress_quality),
+                            },
+                        }
 
-        if num_frames <= 0:
-            skipped_empty += 1
-            print(f"[{i:04d}/{len(plan):04d}] {group_model} {role} skip (empty video): {source_video}")
-            continue
+            frame_paths = pred_obj.get("frame_paths", [])
+            frame_probs = [float(x) for x in pred_obj.get("frame_probs", [])]
+            num_frames = int(pred_obj.get("num_frames", len(frame_probs)))
+            video_prob = float(pred_obj.get("video_prob", float("nan")))
+            video_pred = int(video_prob >= args.threshold) if np.isfinite(video_prob) else 0
+            source_video = str(video_dir.resolve())
 
-        for pth, prob in zip(frame_paths, frame_probs):
-            pred = int(prob >= args.threshold)
-            row = {
-                "path": pth,
-                "video_id": sample_id,
-                "source_video": source_video,
-                "group_model": group_model,
-                "role": role,
-                "label": label,
-                "prob": float(prob),
-                "pred": pred,
-                "cache_hit": cache_hit_flag,
-            }
-            frame_rows.append(row)
-            frame_probs_all.append(float(prob))
-            frame_labels_all.append(float(label))
+            if num_frames <= 0:
+                skipped_empty += 1
+                print(f"[{i:04d}/{len(plan):04d}] {group_model} {role} skip (empty video): {source_video}")
+                continue
 
-        video_rows.append(
-            {
+            frame_batch_rows: List[Dict] = []
+            for pth, prob in zip(frame_paths, frame_probs):
+                pred = int(prob >= args.threshold)
+                row = {
+                    "path": pth,
+                    "video_id": sample_id,
+                    "source_video": source_video,
+                    "group_model": group_model,
+                    "role": role,
+                    "label": label,
+                    "prob": float(prob),
+                    "pred": pred,
+                    "cache_hit": cache_hit_flag,
+                }
+                frame_batch_rows.append(row)
+                frame_probs_all.append(float(prob))
+                frame_labels_all.append(float(label))
+
+            video_row = {
                 "video_id": sample_id,
                 "source_video": source_video,
                 "group_model": group_model,
@@ -601,14 +654,24 @@ def main() -> None:
                 "num_frames": int(num_frames),
                 "cache_hit": cache_hit_flag,
             }
-        )
-        video_probs_all.append(float(video_prob))
-        video_labels_all.append(float(label))
+            video_probs_all.append(float(video_prob))
+            video_labels_all.append(float(label))
 
-        print(
-            f"[{i:04d}/{len(plan):04d}] {group_model} {role} "
-            f"frames={num_frames} prob={video_prob:.4f} cache_hit={cache_hit_flag}"
-        )
+            # Save immediately after each processed video.
+            frame_writer.writerows(frame_batch_rows)
+            video_writer.writerow(video_row)
+            frame_f.flush()
+            video_f.flush()
+            num_frames_written += len(frame_batch_rows)
+            num_videos_written += 1
+
+            print(
+                f"[{i:04d}/{len(plan):04d}] {group_model} {role} "
+                f"frames={num_frames} prob={video_prob:.4f} cache_hit={cache_hit_flag} saved=1"
+            )
+
+        # Flush final group cache after all its videos are done.
+        flush_pending_group_cache(current_group_for_cache)
 
     frame_pred = [1.0 if p >= args.threshold else 0.0 for p in frame_probs_all]
     frame_acc = float(np.mean([int(p == y) for p, y in zip(frame_pred, frame_labels_all)])) if frame_labels_all else 0.0
@@ -618,29 +681,6 @@ def main() -> None:
     video_acc = float(np.mean([int(p == y) for p, y in zip(video_pred, video_labels_all)])) if video_labels_all else 0.0
     video_auc, video_ap = compute_auc_ap(video_labels_all, video_probs_all)
 
-    out_csv = Path(args.output_csv)
-    out_csv.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_csv, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=["path", "video_id", "source_video", "group_model", "role", "label", "prob", "pred", "cache_hit"],
-        )
-        writer.writeheader()
-        writer.writerows(frame_rows)
-
-    if args.video_output_csv:
-        video_csv = Path(args.video_output_csv)
-    else:
-        video_csv = out_csv.with_name(out_csv.stem + "_video.csv")
-    video_csv.parent.mkdir(parents=True, exist_ok=True)
-    with open(video_csv, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=["video_id", "source_video", "group_model", "role", "label", "prob", "pred", "num_frames", "cache_hit"],
-        )
-        writer.writeheader()
-        writer.writerows(video_rows)
-
     metrics = {
         "frame_acc": frame_acc,
         "frame_auc": frame_auc,
@@ -648,8 +688,8 @@ def main() -> None:
         "video_acc": video_acc,
         "video_auc": video_auc,
         "video_ap": video_ap,
-        "num_frames": len(frame_rows),
-        "num_videos": len(video_rows),
+        "num_frames": int(num_frames_written),
+        "num_videos": int(num_videos_written),
         "num_fake": int(n_fake),
         "num_real": int(n_real),
         "threshold": args.threshold,
@@ -657,6 +697,8 @@ def main() -> None:
         "cache_hit_mem": int(cache_hit_mem),
         "cache_hit_disk": int(cache_hit_disk),
         "cache_miss": int(cache_miss),
+        "cache_group_flush_count": int(cache_group_flush_count),
+        "cache_group_flush_videos": int(cache_group_flush_videos),
         "skipped_empty": int(skipped_empty),
     }
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
