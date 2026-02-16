@@ -23,7 +23,7 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "flowformer_ckpt": "./checkpoints/things.pth",
     },
     "train": {
-        "save_dir": "./runs/thesis_stf",
+        "save_dir": "./data/exp/thesis_stf",
         "resume": "",
         "epochs": 20,
         "batch_size": 8,
