@@ -327,12 +327,25 @@ class MotionEncoder(nn.Module):
                     for k, v in raw_state.items():
                         new_key = k[7:] if k.startswith("module.") else k
                         cleaned_state[new_key] = v
-                    model.load_state_dict(cleaned_state, strict=False)
+                    load_msg = model.load_state_dict(cleaned_state, strict=False)
+                    missing_cnt = len(load_msg.missing_keys)
+                    unexpected_cnt = len(load_msg.unexpected_keys)
+                    if missing_cnt > 0 or unexpected_cnt > 0:
+                        msg = (
+                            "[MotionEncoder] FlowFormer checkpoint state mismatch: "
+                            f"missing_keys={missing_cnt}, unexpected_keys={unexpected_cnt}."
+                        )
+                        if self.require_flowformer:
+                            raise RuntimeError(msg)
+                        warnings.warn(msg + " Continue with partial loading.")
                 else:
-                    warnings.warn(
+                    msg = (
                         "[MotionEncoder] Unsupported checkpoint format for FlowFormer. "
                         "Will still run with randomly initialized FlowFormer weights."
                     )
+                    if self.require_flowformer:
+                        raise ValueError(msg)
+                    warnings.warn(msg)
             else:
                 msg = (
                     f"[MotionEncoder] FlowFormer checkpoint not found at {ckpt_path}. "
