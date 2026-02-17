@@ -542,7 +542,12 @@ def compute_losses(
             "fusion_reg": 0.0,
         }
 
-    fusion_reg = outputs.get("fusion_loss", torch.tensor(0.0, device=logits.device))
+    if "fusion_loss" not in outputs:
+        raise KeyError(
+            "[Loss] fusion_mode='cross_attention' but model outputs has no 'fusion_loss'. "
+            "Please check that training args and model fusion_mode are consistent."
+        )
+    fusion_reg = outputs["fusion_loss"]
     total_loss = main_loss + fusion_loss_weight * fusion_reg
     return total_loss, {
         "main_loss": float(main_loss.detach().cpu()),
@@ -1115,6 +1120,10 @@ def main() -> None:
         flowformer_ckpt=args.flowformer_ckpt,
         require_flowformer=args.require_flowformer,
     ).to(device)
+    print(
+        f"[Train] fusion_mode={args.fusion_mode} feature_dim={args.feature_dim} "
+        f"hfri_mode={args.hfri_mode} flowformer_ckpt={args.flowformer_ckpt}"
+    )
 
     motion_token_cache: Optional[MotionTokenCacheManager] = None
     if use_motion_token_cache:
@@ -1266,7 +1275,7 @@ def main() -> None:
                 print(
                     f"[Epoch {epoch:03d}/{args.epochs:03d}] "
                     f"Step {step:04d}/{len(train_loader):04d} "
-                    f"loss={avg_loss:.4f} main={avg_main:.4f} aux={avg_aux:.4f} reg={avg_reg:.4f}"
+                    f"loss={avg_loss:.4f} main={avg_main:.4f} aux={avg_aux:.4f} reg={avg_reg:.3e}"
                 )
 
         scheduler.step()
