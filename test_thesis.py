@@ -3,6 +3,7 @@ import csv
 import hashlib
 import io
 import json
+from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -31,6 +32,13 @@ def _torch_load_compat(path: str, map_location: str = "cpu", weights_only: bool 
     except TypeError:
         kwargs.pop("weights_only", None)
         return torch.load(path, **kwargs)
+
+
+def resolve_abs(path_text: str) -> Path:
+    p = Path(path_text)
+    if not p.is_absolute():
+        p = (Path(__file__).resolve().parent / p).resolve()
+    return p
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,6 +121,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hfri_mode", type=str, default=test_cfg["hfri_mode"], choices=["", "fft", "dct"])
     parser.add_argument("--flowformer_repo", type=str, default=test_cfg["flowformer_repo"])
     parser.add_argument("--flowformer_ckpt", type=str, default=test_cfg["flowformer_ckpt"])
+    parser.add_argument("--motion_token_cache_dir", type=str, default=test_cfg.get("motion_token_cache_dir", "./data/exp/_shared/flowformer_token_cache"))
+    parser.add_argument("--motion_token_cache_dtype", type=str, default=test_cfg.get("motion_token_cache_dtype", "float16"), choices=["float16", "float32"])
+    parser.add_argument("--motion_token_cache_mem_videos", type=int, default=int(test_cfg.get("motion_token_cache_mem_videos", 128)))
+    parser.add_argument("--motion_token_cache_batch_size", type=int, default=int(test_cfg.get("motion_token_cache_batch_size", 16)))
+    parser.add_argument("--motion_token_cache_print_freq", type=int, default=int(test_cfg.get("motion_token_cache_print_freq", 20)))
+
+    if bool_action is not None:
+        parser.add_argument(
+            "--use_motion_token_cache",
+            action=bool_action,
+            default=bool(test_cfg.get("use_motion_token_cache", True)),
+            help="Use shared FlowFormer token cache in test inference.",
+        )
+        parser.add_argument(
+            "--motion_token_cache_refresh",
+            action=bool_action,
+            default=bool(test_cfg.get("motion_token_cache_refresh", False)),
+            help="Ignore token cache and recompute.",
+        )
+    else:
+        parser.add_argument("--use_motion_token_cache", dest="use_motion_token_cache", action="store_true")
+        parser.add_argument("--no-use_motion_token_cache", dest="use_motion_token_cache", action="store_false")
+        parser.set_defaults(use_motion_token_cache=bool(test_cfg.get("use_motion_token_cache", True)))
+
+        parser.add_argument("--motion_token_cache_refresh", dest="motion_token_cache_refresh", action="store_true")
+        parser.add_argument("--no-motion_token_cache_refresh", dest="motion_token_cache_refresh", action="store_false")
+        parser.set_defaults(motion_token_cache_refresh=bool(test_cfg.get("motion_token_cache_refresh", False)))
 
     return parser.parse_args()
 
@@ -432,6 +467,225 @@ class InferencePairTransform:
         return TF.to_tensor(img1), TF.to_tensor(img2)
 
 
+class MotionTokenCacheManager:
+    def __init__(
+        self,
+        motion_encoder: torch.nn.Module,
+        device: torch.device,
+        cache_dir: str,
+        image_size: int,
+        motion_stride: int,
+        max_frames_per_video: int,
+        rgb_compress_quality: int,
+        flowformer_repo: str,
+        flowformer_ckpt: str,
+        save_dtype: str = "float16",
+        refresh_cache: bool = False,
+        mem_videos: int = 128,
+        compute_batch_size: int = 16,
+        print_freq: int = 20,
+    ):
+        self.motion_encoder = motion_encoder
+        self.device = device
+        self.cache_root = resolve_abs(cache_dir)
+        self.cache_root.mkdir(parents=True, exist_ok=True)
+
+        self.image_size = int(image_size)
+        self.motion_stride = max(1, int(motion_stride))
+        self.max_frames_per_video = max(0, int(max_frames_per_video))
+        self.rgb_compress_quality = int(rgb_compress_quality)
+        self.flowformer_repo = str(resolve_abs(flowformer_repo))
+        self.flowformer_ckpt = str(resolve_abs(flowformer_ckpt))
+        self.save_dtype_name = str(save_dtype).lower()
+        self.save_dtype = torch.float16 if self.save_dtype_name == "float16" else torch.float32
+        self.refresh_cache = bool(refresh_cache)
+        self.mem_videos = max(0, int(mem_videos))
+        self.compute_batch_size = max(1, int(compute_batch_size))
+        self.print_freq = max(1, int(print_freq))
+
+        self.token_dim = int(getattr(motion_encoder.align, "in_features", 256))
+        self.cache_bucket = self._build_cache_bucket()
+        self.transform = InferencePairTransform(
+            image_size=self.image_size,
+            rgb_compress_quality=self.rgb_compress_quality,
+        )
+
+        self.mem_cache: "OrderedDict[str, torch.Tensor]" = OrderedDict()
+        self.hit_mem = 0
+        self.hit_disk = 0
+        self.miss_compute = 0
+        self.compute_calls = 0
+
+    def _build_cache_bucket(self) -> Path:
+        ckpt_path = Path(self.flowformer_ckpt)
+        try:
+            ckpt_mtime = ckpt_path.stat().st_mtime_ns
+        except Exception:
+            ckpt_mtime = 0
+
+        signature_obj = {
+            "script": "cache_flowformer_tokens_v1",
+            "flowformer_repo": self.flowformer_repo,
+            "flowformer_ckpt": self.flowformer_ckpt,
+            "flowformer_ckpt_mtime_ns": int(ckpt_mtime),
+            "image_size": int(self.image_size),
+            "motion_stride": int(self.motion_stride),
+            "max_frames_per_video": int(self.max_frames_per_video),
+            "rgb_compress_quality": int(self.rgb_compress_quality),
+            "token_dim": int(self.token_dim),
+            "save_dtype": self.save_dtype_name,
+        }
+        sign_text = json.dumps(signature_obj, ensure_ascii=False, sort_keys=True)
+        sign = hashlib.sha1(sign_text.encode("utf-8")).hexdigest()[:16]
+        bucket = self.cache_root / sign
+        bucket.mkdir(parents=True, exist_ok=True)
+        with open(bucket / "signature.json", "w", encoding="utf-8") as f:
+            json.dump(signature_obj, f, ensure_ascii=False, indent=2)
+        return bucket
+
+    @staticmethod
+    def _video_key(video_dir: Path) -> str:
+        return str(video_dir.resolve()).lower()
+
+    def _cache_file(self, video_dir: Path) -> Path:
+        key = self._video_key(video_dir)
+        hid = hashlib.sha1(key.encode("utf-8")).hexdigest()
+        sub = self.cache_bucket / hid[:2]
+        sub.mkdir(parents=True, exist_ok=True)
+        return sub / f"{hid}.pt"
+
+    def _mem_get(self, key: str) -> Optional[torch.Tensor]:
+        if key not in self.mem_cache:
+            return None
+        tokens = self.mem_cache.pop(key)
+        self.mem_cache[key] = tokens
+        return tokens
+
+    def _mem_set(self, key: str, tokens: torch.Tensor) -> None:
+        if self.mem_videos <= 0:
+            return
+        if key in self.mem_cache:
+            self.mem_cache.pop(key)
+        self.mem_cache[key] = tokens
+        while len(self.mem_cache) > self.mem_videos:
+            self.mem_cache.popitem(last=False)
+
+    def _load_video_tokens(self, cache_file: Path) -> Optional[torch.Tensor]:
+        if not cache_file.exists():
+            return None
+        try:
+            obj = _torch_load_compat(str(cache_file), map_location="cpu", weights_only=False)
+            if not isinstance(obj, dict):
+                return None
+            tokens = obj.get("motion_tokens", None)
+            if not isinstance(tokens, torch.Tensor) or tokens.ndim != 2:
+                return None
+            return tokens.to(dtype=self.save_dtype, device="cpu")
+        except Exception:
+            return None
+
+    def _save_video_tokens(
+        self,
+        cache_file: Path,
+        video_dir: Path,
+        frames: List[Path],
+        pairs: List[Tuple[int, int]],
+        tokens: torch.Tensor,
+    ) -> None:
+        payload = {
+            "video_dir": str(video_dir.resolve()),
+            "num_frames": int(len(frames)),
+            "num_pairs": int(len(pairs)),
+            "motion_stride": int(self.motion_stride),
+            "image_size": int(self.image_size),
+            "rgb_compress_quality": int(self.rgb_compress_quality),
+            "frame_paths": [str(p.resolve()) for p in frames],
+            "pair_indices": [(int(i), int(j)) for i, j in pairs],
+            "token_dim": int(tokens.shape[1]) if tokens.ndim == 2 else int(self.token_dim),
+            "save_dtype": self.save_dtype_name,
+            "motion_tokens": tokens,
+        }
+        tmp_file = cache_file.with_suffix(".tmp")
+        torch.save(payload, str(tmp_file))
+        tmp_file.replace(cache_file)
+
+    def _compute_video_tokens(self, video_dir: Path) -> torch.Tensor:
+        frames = list_image_files(video_dir)
+        if self.max_frames_per_video > 0:
+            frames = frames[: self.max_frames_per_video]
+        if not frames:
+            return torch.empty((0, int(self.token_dim)), dtype=self.save_dtype)
+
+        n = len(frames)
+        pairs: List[Tuple[int, int]] = []
+        for i in range(n):
+            j = 0 if n == 1 else min(n - 1, i + self.motion_stride)
+            pairs.append((i, j))
+
+        token_chunks: List[torch.Tensor] = []
+        was_training = bool(self.motion_encoder.training)
+        self.motion_encoder.eval()
+        try:
+            for start in range(0, len(pairs), self.compute_batch_size):
+                batch_pairs = pairs[start : start + self.compute_batch_size]
+                x1_list: List[torch.Tensor] = []
+                x2_list: List[torch.Tensor] = []
+                for i, j in batch_pairs:
+                    with Image.open(frames[i]) as img1_raw, Image.open(frames[j]) as img2_raw:
+                        x1, x2 = self.transform(img1_raw.convert("RGB"), img2_raw.convert("RGB"))
+                    x1_list.append(x1)
+                    x2_list.append(x2)
+                x1_batch = torch.stack(x1_list, dim=0).to(self.device, non_blocking=True)
+                x2_batch = torch.stack(x2_list, dim=0).to(self.device, non_blocking=True)
+                with torch.no_grad():
+                    tokens = self.motion_encoder.extract_motion_tokens(x1_batch, x2_batch)
+                token_chunks.append(tokens.detach().cpu().to(dtype=self.save_dtype))
+        finally:
+            self.motion_encoder.train(was_training)
+
+        if token_chunks:
+            video_tokens = torch.cat(token_chunks, dim=0)
+        else:
+            video_tokens = torch.empty((0, int(self.token_dim)), dtype=self.save_dtype)
+
+        cache_file = self._cache_file(video_dir)
+        self._save_video_tokens(
+            cache_file=cache_file,
+            video_dir=video_dir,
+            frames=frames,
+            pairs=pairs,
+            tokens=video_tokens,
+        )
+        self.miss_compute += 1
+        self.compute_calls += 1
+        if self.compute_calls % self.print_freq == 0:
+            print(
+                f"[MotionTokenCache] computed={self.miss_compute} hit_mem={self.hit_mem} "
+                f"hit_disk={self.hit_disk} bucket={self.cache_bucket}"
+            )
+        return video_tokens
+
+    def ensure_video_tokens(self, video_dir: Path) -> torch.Tensor:
+        key = self._video_key(video_dir)
+
+        tokens = self._mem_get(key)
+        if tokens is not None:
+            self.hit_mem += 1
+            return tokens
+
+        cache_file = self._cache_file(video_dir)
+        if cache_file.exists() and (not self.refresh_cache):
+            tokens = self._load_video_tokens(cache_file)
+            if tokens is not None:
+                self.hit_disk += 1
+                self._mem_set(key, tokens)
+                return tokens
+
+        tokens = self._compute_video_tokens(video_dir)
+        self._mem_set(key, tokens)
+        return tokens
+
+
 def infer_one_video(
     model: torch.nn.Module,
     device: torch.device,
@@ -446,6 +700,7 @@ def infer_one_video(
     video_agg_topk_min: int = 3,
     video_agg_topk_max: int = 32,
     video_agg_hybrid_alpha: float = 0.7,
+    motion_token_cache: Optional[MotionTokenCacheManager] = None,
 ) -> Dict:
     frames = list_image_files(video_dir)
     if max_frames_per_video > 0:
@@ -460,10 +715,14 @@ def infer_one_video(
 
     transform = InferencePairTransform(image_size=image_size, rgb_compress_quality=rgb_compress_quality)
     n = len(frames)
-    pairs: List[Tuple[Path, Path]] = []
+    pairs: List[Tuple[int, int]] = []
     for i in range(n):
         j = 0 if n == 1 else min(n - 1, i + max(1, int(motion_stride)))
-        pairs.append((frames[i], frames[j]))
+        pairs.append((i, j))
+
+    video_tokens: Optional[torch.Tensor] = None
+    if motion_token_cache is not None:
+        video_tokens = motion_token_cache.ensure_video_tokens(video_dir)
 
     frame_paths: List[str] = []
     frame_probs: List[float] = []
@@ -474,19 +733,38 @@ def infer_one_video(
             x1_list: List[torch.Tensor] = []
             x2_list: List[torch.Tensor] = []
             p1_list: List[str] = []
+            idx_list: List[int] = []
 
-            for p1, p2 in batch_pairs:
-                img1 = Image.open(p1).convert("RGB")
-                img2 = Image.open(p2).convert("RGB")
-                x1, x2 = transform(img1, img2)
+            for i, j in batch_pairs:
+                p1 = frames[i]
+                idx_list.append(int(i))
+                if motion_token_cache is not None:
+                    with Image.open(p1) as img1_raw:
+                        img1 = img1_raw.convert("RGB")
+                    x1, _ = transform(img1, img1)
+                    x2 = x1
+                else:
+                    p2 = frames[j]
+                    with Image.open(p1) as img1_raw, Image.open(p2) as img2_raw:
+                        img1 = img1_raw.convert("RGB")
+                        img2 = img2_raw.convert("RGB")
+                    x1, x2 = transform(img1, img2)
                 x1_list.append(x1)
                 x2_list.append(x2)
                 p1_list.append(str(p1))
 
             x1_batch = torch.stack(x1_list, dim=0).to(device, non_blocking=True)  # [B,3,H,W]
-            x2_batch = torch.stack(x2_list, dim=0).to(device, non_blocking=True)  # [B,3,H,W]
-
-            outputs = model(x1_batch, x1_batch, x2_batch)
+            if motion_token_cache is not None:
+                if video_tokens is None or video_tokens.ndim != 2 or video_tokens.size(0) <= 0:
+                    token_dim = int(getattr(motion_token_cache, "token_dim", 256))
+                    motion_tokens_batch = torch.zeros((len(idx_list), token_dim), dtype=torch.float32, device=device)
+                else:
+                    safe_indices = [min(max(int(i), 0), int(video_tokens.size(0) - 1)) for i in idx_list]
+                    motion_tokens_batch = video_tokens[safe_indices].to(device, non_blocking=True)
+                outputs = model(x1_batch, motion_tokens=motion_tokens_batch)
+            else:
+                x2_batch = torch.stack(x2_list, dim=0).to(device, non_blocking=True)  # [B,3,H,W]
+                outputs = model(x1_batch, x1_batch, x2_batch)
             probs = torch.sigmoid(outputs["logits"]).squeeze(1).detach().cpu().numpy().tolist()
 
             frame_paths.extend(p1_list)
@@ -539,6 +817,29 @@ def main() -> None:
         f"min={int(args.video_agg_topk_min)},max={int(args.video_agg_topk_max)},"
         f"alpha={float(args.video_agg_hybrid_alpha):.2f})"
     )
+
+    motion_token_cache: Optional[MotionTokenCacheManager] = None
+    if bool(args.use_motion_token_cache):
+        motion_token_cache = MotionTokenCacheManager(
+            motion_encoder=model.motion_encoder,
+            device=device,
+            cache_dir=args.motion_token_cache_dir,
+            image_size=args.image_size,
+            motion_stride=args.motion_stride,
+            max_frames_per_video=args.max_frames_per_video,
+            rgb_compress_quality=args.rgb_compress_quality,
+            flowformer_repo=model_args["flowformer_repo"],
+            flowformer_ckpt=model_args["flowformer_ckpt"],
+            save_dtype=args.motion_token_cache_dtype,
+            refresh_cache=bool(args.motion_token_cache_refresh),
+            mem_videos=args.motion_token_cache_mem_videos,
+            compute_batch_size=args.motion_token_cache_batch_size,
+            print_freq=args.motion_token_cache_print_freq,
+        )
+        print(
+            f"[MotionTokenCache] enabled bucket={motion_token_cache.cache_bucket} "
+            f"dtype={args.motion_token_cache_dtype} refresh={bool(args.motion_token_cache_refresh)}"
+        )
 
     data_root = Path(args.data_root)
     plan = build_balanced_eval_plan(
@@ -694,6 +995,7 @@ def main() -> None:
                     video_agg_topk_min=args.video_agg_topk_min,
                     video_agg_topk_max=args.video_agg_topk_max,
                     video_agg_hybrid_alpha=args.video_agg_hybrid_alpha,
+                    motion_token_cache=motion_token_cache,
                 )
                 mem_cache[key] = pred_obj
 
@@ -819,6 +1121,11 @@ def main() -> None:
         "real_repeat_total": int(real_repeat_total),
         "real_repeat_cache_hit": int(real_repeat_cache_hit),
         "skipped_empty": int(skipped_empty),
+        "use_motion_token_cache": bool(args.use_motion_token_cache),
+        "motion_token_cache_bucket": str(motion_token_cache.cache_bucket) if motion_token_cache is not None else "",
+        "motion_token_cache_hit_mem": int(motion_token_cache.hit_mem) if motion_token_cache is not None else 0,
+        "motion_token_cache_hit_disk": int(motion_token_cache.hit_disk) if motion_token_cache is not None else 0,
+        "motion_token_cache_miss_compute": int(motion_token_cache.miss_compute) if motion_token_cache is not None else 0,
     }
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
     print(f"[Saved] frame-level csv: {out_csv}")

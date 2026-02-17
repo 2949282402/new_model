@@ -410,8 +410,23 @@ class MotionEncoder(nn.Module):
             self.flowformer.eval()
         return self
 
-    def forward(self, img1: torch.Tensor, img2: Optional[torch.Tensor] = None) -> torch.Tensor:
-        # img1/img2: [B, 3, H, W]
+    def _extract_fallback_tokens(self, img1: torch.Tensor, img2: torch.Tensor) -> torch.Tensor:
+        # Fallback token shape: [B, 256]
+        x = torch.cat([img1, img2], dim=1)  # [B, 6, H, W]
+        x = self.fallback(x)  # [B, 256, H/8, W/8]
+        return x.mean(dim=(2, 3))  # [B, 256]
+
+    def extract_motion_tokens(
+        self,
+        img1: torch.Tensor,
+        img2: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Extract frozen motion tokens before `self.align`.
+        Output shape:
+            FlowFormer mode -> [B, D]
+            fallback mode   -> [B, 256]
+        """
         if img2 is None:
             img2 = img1
 
@@ -435,15 +450,24 @@ class MotionEncoder(nn.Module):
                 _, t, d = cost_memory.shape
                 cost_memory = cost_memory.reshape(b, -1, t, d)  # [B, H1*W1, T, D]
                 motion_tokens = cost_memory.mean(dim=(1, 2))  # [B, D]
+            return motion_tokens
 
-            f_motion = self.align(motion_tokens)  # [B, C]
-            return f_motion
+        return self._extract_fallback_tokens(img1, img2)
 
-        # fallback branch
-        x = torch.cat([img1, img2], dim=1)  # [B, 6, H, W]
-        x = self.fallback(x)  # [B, 256, H/8, W/8]
-        x = x.mean(dim=(2, 3))  # [B, 256]
-        f_motion = self.align(x)  # [B, C]
+    def forward(
+        self,
+        img1: Optional[torch.Tensor] = None,
+        img2: Optional[torch.Tensor] = None,
+        motion_tokens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        # img1/img2: [B, 3, H, W], motion_tokens: [B, D]
+        if motion_tokens is None:
+            if img1 is None:
+                raise ValueError("img1 is required when motion_tokens is None.")
+            motion_tokens = self.extract_motion_tokens(img1, img2)
+
+        motion_tokens = motion_tokens.to(dtype=self.align.weight.dtype)
+        f_motion = self.align(motion_tokens)  # [B, C]
         return f_motion
 
 
@@ -512,12 +536,14 @@ class Enhanced_STF_Detector(nn.Module):
         img_spatial: torch.Tensor,
         img_motion_1: Optional[torch.Tensor] = None,
         img_motion_2: Optional[torch.Tensor] = None,
+        motion_tokens: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Args:
             img_spatial: [B, 3, H, W]
             img_motion_1: [B, 3, H, W], optional
             img_motion_2: [B, 3, H, W], optional
+            motion_tokens: [B, D], optional precomputed motion tokens
 
         Returns:
             cross_attention:
@@ -525,16 +551,21 @@ class Enhanced_STF_Detector(nn.Module):
             independent:
                 {'logits': [B,1], 'aux_logits': (logit_s, logit_t)}
         """
-        if img_motion_1 is None:
-            img_motion_1 = img_spatial
-        if img_motion_2 is None:
-            img_motion_2 = img_motion_1
+        if motion_tokens is None:
+            if img_motion_1 is None:
+                img_motion_1 = img_spatial
+            if img_motion_2 is None:
+                img_motion_2 = img_motion_1
 
         # 1) Feature extraction
         # f_spatial: [B, C]
         f_spatial = self.spatial_encoder(img_spatial)
         # f_motion: [B, C]
-        f_motion = self.motion_encoder(img_motion_1, img_motion_2)
+        f_motion = self.motion_encoder(
+            img1=img_motion_1,
+            img2=img_motion_2,
+            motion_tokens=motion_tokens,
+        )
 
         # 2) Fusion mode branch
         if self.fusion_mode == "cross_attention":
