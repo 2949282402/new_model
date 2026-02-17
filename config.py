@@ -46,6 +46,11 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "cache_val_predictions": True,  # 是否缓存验证集预测结果到 CSV（便于后续找阈值）
         "cache_val_every": 1,  # 每多少个验证 epoch 缓存一次预测
         "cache_val_threshold": 0.5,  # 缓存 CSV 里生成 pred 列时使用的阈值
+        "val_video_agg_method": "hybrid_topk_mean",  # 验证集视频级聚合策略：mean / topk_mean / hybrid_topk_mean
+        "val_video_agg_topk_ratio": 0.2,  # top-k 聚合时使用的比例 k_ratio
+        "val_video_agg_topk_min": 3,  # top-k 聚合的最小 k
+        "val_video_agg_topk_max": 32,  # top-k 聚合的最大 k，0 表示不限制
+        "val_video_agg_hybrid_alpha": 0.7,  # hybrid_topk_mean 权重：final=alpha*topk_mean+(1-alpha)*mean
     },
     "test": {
         "checkpoint": "./data/exp/thesis_stf/best.pth",  # 测试时加载的模型权重路径
@@ -67,6 +72,27 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "hfri_mode": "",  # 测试时可选覆盖 HFRI 模式，空字符串表示沿用 checkpoint 配置
         "flowformer_repo": "",  # 测试时可选覆盖 FlowFormer 源码目录，空字符串表示沿用 checkpoint 配置
         "flowformer_ckpt": "",  # 测试时可选覆盖 FlowFormer 权重路径，空字符串表示沿用 checkpoint 配置
+        "video_agg_method": "topk_mean",  # 视频级概率聚合策略：mean / topk_mean / hybrid_topk_mean
+        "video_agg_topk_ratio": 0.1,  # top-k 聚合时使用的比例 k_ratio
+        "video_agg_topk_min": 3,  # top-k 聚合的最小 k
+        "video_agg_topk_max": 32,  # top-k 聚合的最大 k，0 表示不限制
+        "video_agg_hybrid_alpha": 0.7,  # hybrid_topk_mean 权重：final=alpha*topk_mean+(1-alpha)*mean
+    },
+    "threshold_search": {
+        "val_cache_dir": "./data/exp/thesis_stf/val_cache",  # 验证集预测缓存目录（包含 epoch_xxx_frame/video.csv）
+        "input_csv": "",  # 显式指定输入 CSV；为空时自动从 val_cache_dir 选择
+        "level": "video",  # 阈值搜索粒度：video 或 frame
+        "epoch": 0,  # 选择的 epoch 编号；0 表示自动使用最新一轮
+        "threshold_min": 0.0,  # 阈值搜索下界
+        "threshold_max": 1.0,  # 阈值搜索上界
+        "threshold_step": 0.001,  # 阈值搜索步长
+        "opt_metric": "f1",  # 最优阈值目标指标：f1/acc/balanced_acc/youden_j/precision/recall
+        "near_best_delta": 0.005,  # 阈值范围容差：保留 metric >= best - delta 的阈值
+        "min_precision": 0.0,  # 约束条件：最小 precision
+        "min_recall": 0.0,  # 约束条件：最小 recall
+        "topk": 10,  # 输出前 K 个候选阈值
+        "curve_output_csv": "./data/exp/thesis_stf/threshold_curve.csv",  # 阈值-指标曲线输出 CSV
+        "summary_output_json": "./data/exp/thesis_stf/threshold_summary.json",  # 最优阈值与推荐范围摘要 JSON
     },
     "process": {
         "output_root": "",  # 抽帧输出根目录，空字符串表示自动用 <input_root>_frames

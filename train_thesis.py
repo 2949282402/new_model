@@ -240,6 +240,61 @@ def compute_losses(
     }
 
 
+def _calc_topk_k(num_frames: int, ratio: float, k_min: int, k_max: int) -> int:
+    n = max(0, int(num_frames))
+    if n <= 0:
+        return 0
+    r = float(ratio)
+    if not math.isfinite(r):
+        r = 0.1
+    r = min(max(r, 0.0), 1.0)
+    k = int(np.ceil(n * r))
+    k = max(int(k_min), k)
+    if int(k_max) > 0:
+        k = min(int(k_max), k)
+    k = min(n, max(1, k))
+    return int(k)
+
+
+def aggregate_video_probability(
+    frame_probs: List[float],
+    method: str,
+    topk_ratio: float,
+    topk_min: int,
+    topk_max: int,
+    hybrid_alpha: float,
+) -> float:
+    if not frame_probs:
+        return float("nan")
+    arr = np.asarray(frame_probs, dtype=np.float32)
+    if arr.size == 0:
+        return float("nan")
+
+    all_mean = float(np.mean(arr))
+    agg_method = str(method).strip().lower()
+    if agg_method == "mean":
+        return all_mean
+
+    k = _calc_topk_k(
+        num_frames=int(arr.size),
+        ratio=float(topk_ratio),
+        k_min=int(topk_min),
+        k_max=int(topk_max),
+    )
+    if k <= 0:
+        return all_mean
+    topk_vals = np.sort(arr)[-k:]
+    topk_mean = float(np.mean(topk_vals))
+    if agg_method == "topk_mean":
+        return topk_mean
+
+    alpha = float(hybrid_alpha)
+    if not math.isfinite(alpha):
+        alpha = 0.7
+    alpha = min(max(alpha, 0.0), 1.0)
+    return float(alpha * topk_mean + (1.0 - alpha) * all_mean)
+
+
 @torch.no_grad()
 def evaluate(
     model: nn.Module,
@@ -250,6 +305,11 @@ def evaluate(
     aux_loss_weight: float,
     fusion_loss_weight: float,
     threshold: float = 0.5,
+    video_agg_method: str = "topk_mean",
+    video_agg_topk_ratio: float = 0.1,
+    video_agg_topk_min: int = 3,
+    video_agg_topk_max: int = 32,
+    video_agg_hybrid_alpha: float = 0.7,
 ) -> Tuple[Dict[str, float], List[Dict], List[Dict]]:
     model.eval()
     losses: List[float] = []
@@ -302,7 +362,14 @@ def evaluate(
     video_labels: List[float] = []
     video_rows: List[Dict] = []
     for _, items in video_pool.items():
-        p = float(np.mean([it[0] for it in items]))
+        p = aggregate_video_probability(
+            frame_probs=[float(it[0]) for it in items],
+            method=video_agg_method,
+            topk_ratio=video_agg_topk_ratio,
+            topk_min=video_agg_topk_min,
+            topk_max=video_agg_topk_max,
+            hybrid_alpha=video_agg_hybrid_alpha,
+        )
         y = float(round(np.mean([it[1] for it in items])))
         video_probs.append(p)
         video_labels.append(y)
@@ -547,6 +614,33 @@ def parse_args() -> argparse.Namespace:
         default=train_cfg["cache_val_threshold"],
         help="Threshold used to generate pred column in cached CSV.",
     )
+    parser.add_argument(
+        "--val_video_agg_method",
+        type=str,
+        default=train_cfg.get("val_video_agg_method", "topk_mean"),
+        choices=["mean", "topk_mean", "hybrid_topk_mean"],
+        help="Video-level aggregation for validation metrics/cache.",
+    )
+    parser.add_argument(
+        "--val_video_agg_topk_ratio",
+        type=float,
+        default=float(train_cfg.get("val_video_agg_topk_ratio", 0.1)),
+    )
+    parser.add_argument(
+        "--val_video_agg_topk_min",
+        type=int,
+        default=int(train_cfg.get("val_video_agg_topk_min", 3)),
+    )
+    parser.add_argument(
+        "--val_video_agg_topk_max",
+        type=int,
+        default=int(train_cfg.get("val_video_agg_topk_max", 32)),
+    )
+    parser.add_argument(
+        "--val_video_agg_hybrid_alpha",
+        type=float,
+        default=float(train_cfg.get("val_video_agg_hybrid_alpha", 0.7)),
+    )
 
     parser.add_argument("--flowformer_repo", type=str, default=model_cfg["flowformer_repo"])
     parser.add_argument("--flowformer_ckpt", type=str, default=model_cfg["flowformer_ckpt"])
@@ -659,6 +753,14 @@ def main() -> None:
 
     if val_loader is None:
         print("[EarlyStop] Validation set is not provided. Early stopping is disabled.")
+    else:
+        print(
+            f"[ValAgg] method={args.val_video_agg_method} "
+            f"ratio={float(args.val_video_agg_topk_ratio):.3f} "
+            f"min={int(args.val_video_agg_topk_min)} "
+            f"max={int(args.val_video_agg_topk_max)} "
+            f"alpha={float(args.val_video_agg_hybrid_alpha):.2f}"
+        )
 
     if args.early_stop_metric == "loss" and best_metric is not None and best_metric < 0:
         # Compatibility with older checkpoints that initialized best_metric as -1.
@@ -736,6 +838,11 @@ def main() -> None:
                 aux_loss_weight=args.aux_loss_weight,
                 fusion_loss_weight=args.fusion_loss_weight,
                 threshold=args.cache_val_threshold,
+                video_agg_method=args.val_video_agg_method,
+                video_agg_topk_ratio=args.val_video_agg_topk_ratio,
+                video_agg_topk_min=args.val_video_agg_topk_min,
+                video_agg_topk_max=args.val_video_agg_topk_max,
+                video_agg_hybrid_alpha=args.val_video_agg_hybrid_alpha,
             )
             print(
                 f"[Val][Epoch {epoch:03d}] "

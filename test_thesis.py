@@ -44,6 +44,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_csv", type=str, default=test_cfg["output_csv"])
     parser.add_argument("--video_output_csv", type=str, default=test_cfg["video_output_csv"], help="Optional video-level csv path.")
     parser.add_argument("--threshold", type=float, default=test_cfg["threshold"])
+    parser.add_argument(
+        "--video_agg_method",
+        type=str,
+        default=test_cfg.get("video_agg_method", "topk_mean"),
+        choices=["mean", "topk_mean", "hybrid_topk_mean"],
+        help="Video-level aggregation method for frame probabilities.",
+    )
+    parser.add_argument("--video_agg_topk_ratio", type=float, default=float(test_cfg.get("video_agg_topk_ratio", 0.1)))
+    parser.add_argument("--video_agg_topk_min", type=int, default=int(test_cfg.get("video_agg_topk_min", 3)))
+    parser.add_argument("--video_agg_topk_max", type=int, default=int(test_cfg.get("video_agg_topk_max", 32)))
+    parser.add_argument("--video_agg_hybrid_alpha", type=float, default=float(test_cfg.get("video_agg_hybrid_alpha", 0.7)))
 
     parser.add_argument("--batch_size", type=int, default=test_cfg["batch_size"])
     parser.add_argument("--num_workers", type=int, default=test_cfg["num_workers"])  # kept for interface compatibility
@@ -111,6 +122,61 @@ def safe_float(x: float) -> float:
         return float(x)
     except Exception:
         return float("nan")
+
+
+def _calc_topk_k(num_frames: int, ratio: float, k_min: int, k_max: int) -> int:
+    n = max(0, int(num_frames))
+    if n <= 0:
+        return 0
+    r = float(ratio)
+    if not np.isfinite(r):
+        r = 0.1
+    r = min(max(r, 0.0), 1.0)
+    k = int(np.ceil(n * r))
+    k = max(int(k_min), k)
+    if int(k_max) > 0:
+        k = min(int(k_max), k)
+    k = min(n, max(1, k))
+    return int(k)
+
+
+def aggregate_video_probability(
+    frame_probs: List[float],
+    method: str,
+    topk_ratio: float,
+    topk_min: int,
+    topk_max: int,
+    hybrid_alpha: float,
+) -> float:
+    if not frame_probs:
+        return float("nan")
+    arr = np.asarray(frame_probs, dtype=np.float32)
+    if arr.size == 0:
+        return float("nan")
+
+    all_mean = float(np.mean(arr))
+    agg_method = str(method).strip().lower()
+    if agg_method == "mean":
+        return all_mean
+
+    k = _calc_topk_k(
+        num_frames=int(arr.size),
+        ratio=float(topk_ratio),
+        k_min=int(topk_min),
+        k_max=int(topk_max),
+    )
+    if k <= 0:
+        return all_mean
+    topk_vals = np.sort(arr)[-k:]
+    topk_mean = float(np.mean(topk_vals))
+    if agg_method == "topk_mean":
+        return topk_mean
+
+    alpha = float(hybrid_alpha)
+    if not np.isfinite(alpha):
+        alpha = 0.7
+    alpha = min(max(alpha, 0.0), 1.0)
+    return float(alpha * topk_mean + (1.0 - alpha) * all_mean)
 
 
 def infer_model_args(test_args: argparse.Namespace, ckpt_cfg: Dict) -> Dict:
@@ -375,6 +441,11 @@ def infer_one_video(
     max_frames_per_video: int,
     batch_size: int,
     rgb_compress_quality: int = 0,
+    video_agg_method: str = "topk_mean",
+    video_agg_topk_ratio: float = 0.1,
+    video_agg_topk_min: int = 3,
+    video_agg_topk_max: int = 32,
+    video_agg_hybrid_alpha: float = 0.7,
 ) -> Dict:
     frames = list_image_files(video_dir)
     if max_frames_per_video > 0:
@@ -421,7 +492,14 @@ def infer_one_video(
             frame_paths.extend(p1_list)
             frame_probs.extend([float(p) for p in probs])
 
-    video_prob = float(np.mean(frame_probs)) if frame_probs else float("nan")
+    video_prob = aggregate_video_probability(
+        frame_probs=frame_probs,
+        method=video_agg_method,
+        topk_ratio=video_agg_topk_ratio,
+        topk_min=video_agg_topk_min,
+        topk_max=video_agg_topk_max,
+        hybrid_alpha=video_agg_hybrid_alpha,
+    )
     return {
         "frame_paths": frame_paths,
         "frame_probs": frame_probs,
@@ -456,7 +534,10 @@ def main() -> None:
     )
     print(
         f"[Model] fusion_mode={model_args['fusion_mode']} feature_dim={model_args['feature_dim']} "
-        f"hfri_mode={model_args['hfri_mode']} rgb_compress_quality={int(args.rgb_compress_quality)}"
+        f"hfri_mode={model_args['hfri_mode']} rgb_compress_quality={int(args.rgb_compress_quality)} "
+        f"video_agg={args.video_agg_method}(ratio={float(args.video_agg_topk_ratio):.3f},"
+        f"min={int(args.video_agg_topk_min)},max={int(args.video_agg_topk_max)},"
+        f"alpha={float(args.video_agg_hybrid_alpha):.2f})"
     )
 
     data_root = Path(args.data_root)
@@ -608,6 +689,11 @@ def main() -> None:
                     max_frames_per_video=args.max_frames_per_video,
                     batch_size=args.batch_size,
                     rgb_compress_quality=args.rgb_compress_quality,
+                    video_agg_method=args.video_agg_method,
+                    video_agg_topk_ratio=args.video_agg_topk_ratio,
+                    video_agg_topk_min=args.video_agg_topk_min,
+                    video_agg_topk_max=args.video_agg_topk_max,
+                    video_agg_hybrid_alpha=args.video_agg_hybrid_alpha,
                 )
                 mem_cache[key] = pred_obj
 
@@ -635,7 +721,14 @@ def main() -> None:
             frame_paths = pred_obj.get("frame_paths", [])
             frame_probs = [float(x) for x in pred_obj.get("frame_probs", [])]
             num_frames = int(pred_obj.get("num_frames", len(frame_probs)))
-            video_prob = float(pred_obj.get("video_prob", float("nan")))
+            video_prob = aggregate_video_probability(
+                frame_probs=frame_probs,
+                method=args.video_agg_method,
+                topk_ratio=args.video_agg_topk_ratio,
+                topk_min=args.video_agg_topk_min,
+                topk_max=args.video_agg_topk_max,
+                hybrid_alpha=args.video_agg_hybrid_alpha,
+            )
             video_pred = int(video_prob >= args.threshold) if np.isfinite(video_prob) else 0
             source_video = str(video_dir.resolve())
 
@@ -712,6 +805,11 @@ def main() -> None:
         "num_fake": int(n_fake),
         "num_real": int(n_real),
         "threshold": args.threshold,
+        "video_agg_method": str(args.video_agg_method),
+        "video_agg_topk_ratio": float(args.video_agg_topk_ratio),
+        "video_agg_topk_min": int(args.video_agg_topk_min),
+        "video_agg_topk_max": int(args.video_agg_topk_max),
+        "video_agg_hybrid_alpha": float(args.video_agg_hybrid_alpha),
         "rgb_compress_quality": int(args.rgb_compress_quality),
         "cache_hit_mem": int(cache_hit_mem),
         "cache_hit_disk": int(cache_hit_disk),
