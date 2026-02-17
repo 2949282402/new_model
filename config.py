@@ -161,10 +161,27 @@ def _apply_exp_name_paths(cfg: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str,
     common_cfg["exp_dir"] = _norm_path(exp_dir)
     common_cfg["shared_cache_dir"] = _norm_path(shared_cache_dir)
 
+    def _to_exp_path(path_text: str, default_name: str) -> str:
+        """
+        将路径锚定到当前 exp_dir：
+        - 空字符串 -> exp_dir/default_name
+        - 绝对路径 -> 保持不变
+        - 相对路径 -> 使用其文件名挂到 exp_dir 下
+        """
+        raw = str(path_text or "").strip()
+        if not raw:
+            return _norm_path(exp_dir / default_name)
+        p = Path(raw)
+        if p.is_absolute():
+            return _norm_path(p)
+        return _norm_path(exp_dir / p.name)
+
     train_cfg = cfg.get("train", {})
     if train_cfg:
         train_cfg["save_dir"] = _norm_path(exp_dir)
         train_cfg["motion_token_cache_dir"] = _norm_path(shared_cache_dir / "flowformer_token_cache")
+        if str(train_cfg.get("resume", "")).strip():
+            train_cfg["resume"] = _to_exp_path(str(train_cfg.get("resume", "")), "latest.pth")
 
     test_cfg = cfg.get("test", {})
     if test_cfg:
@@ -173,13 +190,15 @@ def _apply_exp_name_paths(cfg: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str,
         test_cfg["cache_dir"] = _norm_path(exp_dir / "test_cache")
         test_cfg["motion_token_cache_dir"] = _norm_path(shared_cache_dir / "flowformer_token_cache")
         if str(test_cfg.get("video_output_csv", "")).strip():
-            test_cfg["video_output_csv"] = _norm_path(Path(str(test_cfg["video_output_csv"])))
+            test_cfg["video_output_csv"] = _to_exp_path(str(test_cfg.get("video_output_csv", "")), "test_video_predictions.csv")
 
     threshold_cfg = cfg.get("threshold_search", {})
     if threshold_cfg:
         threshold_cfg["val_cache_dir"] = _norm_path(exp_dir / "val_cache")
         threshold_cfg["curve_output_csv"] = _norm_path(exp_dir / "threshold_curve.csv")
         threshold_cfg["summary_output_json"] = _norm_path(exp_dir / "threshold_summary.json")
+        if str(threshold_cfg.get("input_csv", "")).strip():
+            threshold_cfg["input_csv"] = _to_exp_path(str(threshold_cfg.get("input_csv", "")), "epoch_latest_video.csv")
 
     flow_cfg = cfg.get("flow_cache", {})
     if flow_cfg:
