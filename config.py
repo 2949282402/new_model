@@ -18,6 +18,7 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "test_root": "./data/test",  # 测试集根目录
         "image_size": 224,  # 输入图像尺寸（会被 resize 到 image_size x image_size）
         "motion_stride": 2,  # 时序分支配对帧间隔（i 对应 i+stride）
+        "motion_multi_offsets": [1, 2, 4],  # 多间隔时序集成偏移（对同一帧同时使用 i+1/i+2/i+4 并做融合）
         "max_frames_per_video": 0,  # 每个视频最多使用帧数，0 表示不限制
         "real_class_names": ["0_real", "real", "0_reall"],  # 真实类目录名称候选（按顺序匹配）
         "fake_class_names": ["1_fake", "fake"],  # 伪造类目录名称候选（按顺序匹配）
@@ -120,6 +121,7 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "cache_dir": "./data/exp/_shared/flowformer_token_cache",  # FlowFormer token 共享缓存目录（跨实验复用）
         "image_size": 224,  # 预处理尺寸（需与训练/测试一致）
         "motion_stride": 2,  # 帧配对间隔：第 i 帧与 i+stride 帧组成时序对
+        "motion_multi_offsets": [1, 2, 4],  # 预缓存时使用的多间隔偏移（建议与 data.motion_multi_offsets 保持一致）
         "max_frames_per_video": 0,  # 每个视频最多缓存多少帧对，0 表示不限制
         "batch_size": 16,  # 缓存阶段推理 batch 大小
         "rgb_compress_quality": 0,  # 缓存前 RGB 压缩质量：0 不压缩，1~100 为 JPEG 质量

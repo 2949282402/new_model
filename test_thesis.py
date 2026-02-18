@@ -41,6 +41,29 @@ def resolve_abs(path_text: str) -> Path:
     return p
 
 
+def normalize_motion_offsets(motion_stride: int, motion_multi_offsets: Optional[List[int]]) -> List[int]:
+    offsets: List[int] = []
+    if motion_multi_offsets:
+        for x in motion_multi_offsets:
+            try:
+                v = int(x)
+            except Exception:
+                continue
+            if v > 0:
+                offsets.append(v)
+    if not offsets:
+        offsets = [max(1, int(motion_stride))]
+
+    dedup: List[int] = []
+    seen = set()
+    for v in offsets:
+        if v in seen:
+            continue
+        seen.add(v)
+        dedup.append(v)
+    return dedup
+
+
 def parse_args() -> argparse.Namespace:
     cfg = get_default_config()
     data_cfg = cfg["data"]
@@ -68,6 +91,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", type=int, default=test_cfg["num_workers"])  # kept for interface compatibility
     parser.add_argument("--image_size", type=int, default=data_cfg["image_size"])
     parser.add_argument("--motion_stride", type=int, default=data_cfg["motion_stride"])
+    parser.add_argument(
+        "--motion_multi_offsets",
+        type=int,
+        nargs="+",
+        default=[int(x) for x in data_cfg.get("motion_multi_offsets", [1, 2, 4])],
+        help="Motion multi-interval offsets, e.g. 1 2 4.",
+    )
     parser.add_argument("--max_frames_per_video", type=int, default=data_cfg["max_frames_per_video"])
 
     parser.add_argument("--real_dir_name", type=str, default=test_cfg["real_dir_name"])
@@ -382,6 +412,7 @@ def build_cache_bucket(
     model_args: Dict,
     image_size: int,
     motion_stride: int,
+    motion_multi_offsets: Optional[List[int]],
     max_frames_per_video: int,
     rgb_compress_quality: int,
 ) -> Path:
@@ -401,6 +432,7 @@ def build_cache_bucket(
         "flowformer_ckpt": model_args["flowformer_ckpt"],
         "image_size": int(image_size),
         "motion_stride": int(motion_stride),
+        "motion_multi_offsets": [int(x) for x in normalize_motion_offsets(motion_stride, motion_multi_offsets)],
         "max_frames_per_video": int(max_frames_per_video),
         "rgb_compress_quality": int(rgb_compress_quality),
     }
@@ -475,6 +507,7 @@ class MotionTokenCacheManager:
         cache_dir: str,
         image_size: int,
         motion_stride: int,
+        motion_multi_offsets: Optional[List[int]],
         max_frames_per_video: int,
         rgb_compress_quality: int,
         flowformer_repo: str,
@@ -492,6 +525,10 @@ class MotionTokenCacheManager:
 
         self.image_size = int(image_size)
         self.motion_stride = max(1, int(motion_stride))
+        self.motion_offsets = normalize_motion_offsets(
+            motion_stride=self.motion_stride,
+            motion_multi_offsets=motion_multi_offsets,
+        )
         self.max_frames_per_video = max(0, int(max_frames_per_video))
         self.rgb_compress_quality = int(rgb_compress_quality)
         self.flowformer_repo = str(resolve_abs(flowformer_repo))
@@ -530,6 +567,7 @@ class MotionTokenCacheManager:
             "flowformer_ckpt_mtime_ns": int(ckpt_mtime),
             "image_size": int(self.image_size),
             "motion_stride": int(self.motion_stride),
+            "motion_multi_offsets": [int(x) for x in self.motion_offsets],
             "max_frames_per_video": int(self.max_frames_per_video),
             "rgb_compress_quality": int(self.rgb_compress_quality),
             "token_dim": int(self.token_dim),
@@ -597,6 +635,7 @@ class MotionTokenCacheManager:
             "num_frames": int(len(frames)),
             "num_pairs": int(len(pairs)),
             "motion_stride": int(self.motion_stride),
+            "motion_multi_offsets": [int(x) for x in self.motion_offsets],
             "image_size": int(self.image_size),
             "rgb_compress_quality": int(self.rgb_compress_quality),
             "frame_paths": [str(p.resolve()) for p in frames],
@@ -617,20 +656,23 @@ class MotionTokenCacheManager:
             return torch.empty((0, int(self.token_dim)), dtype=self.save_dtype)
 
         n = len(frames)
-        pairs: List[Tuple[int, int]] = []
+        pair_entries: List[Tuple[int, int, int]] = []
         for i in range(n):
-            j = 0 if n == 1 else min(n - 1, i + self.motion_stride)
-            pairs.append((i, j))
+            for off in self.motion_offsets:
+                j = 0 if n == 1 else min(n - 1, i + int(off))
+                pair_entries.append((i, j, int(off)))
+        pairs = [(int(i), int(j)) for i, j, _ in pair_entries]
 
-        token_chunks: List[torch.Tensor] = []
+        token_sum = torch.zeros((n, int(self.token_dim)), dtype=torch.float32)
+        token_count = torch.zeros((n, 1), dtype=torch.float32)
         was_training = bool(self.motion_encoder.training)
         self.motion_encoder.eval()
         try:
-            for start in range(0, len(pairs), self.compute_batch_size):
-                batch_pairs = pairs[start : start + self.compute_batch_size]
+            for start in range(0, len(pair_entries), self.compute_batch_size):
+                batch_pairs = pair_entries[start : start + self.compute_batch_size]
                 x1_list: List[torch.Tensor] = []
                 x2_list: List[torch.Tensor] = []
-                for i, j in batch_pairs:
+                for i, j, _ in batch_pairs:
                     with Image.open(frames[i]) as img1_raw, Image.open(frames[j]) as img2_raw:
                         x1, x2 = self.transform(img1_raw.convert("RGB"), img2_raw.convert("RGB"))
                     x1_list.append(x1)
@@ -639,14 +681,15 @@ class MotionTokenCacheManager:
                 x2_batch = torch.stack(x2_list, dim=0).to(self.device, non_blocking=True)
                 with torch.no_grad():
                     tokens = self.motion_encoder.extract_motion_tokens(x1_batch, x2_batch)
-                token_chunks.append(tokens.detach().cpu().to(dtype=self.save_dtype))
+                tokens_cpu = tokens.detach().cpu().to(dtype=torch.float32)
+                for local_idx, (i, _, _) in enumerate(batch_pairs):
+                    token_sum[int(i)] += tokens_cpu[local_idx]
+                    token_count[int(i), 0] += 1.0
         finally:
             self.motion_encoder.train(was_training)
 
-        if token_chunks:
-            video_tokens = torch.cat(token_chunks, dim=0)
-        else:
-            video_tokens = torch.empty((0, int(self.token_dim)), dtype=self.save_dtype)
+        token_count = token_count.clamp_min(1.0)
+        video_tokens = (token_sum / token_count).to(dtype=self.save_dtype)
 
         cache_file = self._cache_file(video_dir)
         self._save_video_tokens(
@@ -692,6 +735,7 @@ def infer_one_video(
     video_dir: Path,
     image_size: int,
     motion_stride: int,
+    motion_multi_offsets: Optional[List[int]],
     max_frames_per_video: int,
     batch_size: int,
     rgb_compress_quality: int = 0,
@@ -715,10 +759,8 @@ def infer_one_video(
 
     transform = InferencePairTransform(image_size=image_size, rgb_compress_quality=rgb_compress_quality)
     n = len(frames)
-    pairs: List[Tuple[int, int]] = []
-    for i in range(n):
-        j = 0 if n == 1 else min(n - 1, i + max(1, int(motion_stride)))
-        pairs.append((i, j))
+    center_indices = list(range(n))
+    motion_offsets = normalize_motion_offsets(motion_stride=motion_stride, motion_multi_offsets=motion_multi_offsets)
 
     video_tokens: Optional[torch.Tensor] = None
     if motion_token_cache is not None:
@@ -728,29 +770,17 @@ def infer_one_video(
     frame_probs: List[float] = []
 
     with torch.no_grad():
-        for start in range(0, len(pairs), max(1, int(batch_size))):
-            batch_pairs = pairs[start : start + max(1, int(batch_size))]
+        for start in range(0, len(center_indices), max(1, int(batch_size))):
+            idx_list = center_indices[start : start + max(1, int(batch_size))]
             x1_list: List[torch.Tensor] = []
-            x2_list: List[torch.Tensor] = []
             p1_list: List[str] = []
-            idx_list: List[int] = []
 
-            for i, j in batch_pairs:
+            for i in idx_list:
                 p1 = frames[i]
-                idx_list.append(int(i))
-                if motion_token_cache is not None:
-                    with Image.open(p1) as img1_raw:
-                        img1 = img1_raw.convert("RGB")
-                    x1, _ = transform(img1, img1)
-                    x2 = x1
-                else:
-                    p2 = frames[j]
-                    with Image.open(p1) as img1_raw, Image.open(p2) as img2_raw:
-                        img1 = img1_raw.convert("RGB")
-                        img2 = img2_raw.convert("RGB")
-                    x1, x2 = transform(img1, img2)
+                with Image.open(p1) as img1_raw:
+                    img1 = img1_raw.convert("RGB")
+                x1, _ = transform(img1, img1)
                 x1_list.append(x1)
-                x2_list.append(x2)
                 p1_list.append(str(p1))
 
             x1_batch = torch.stack(x1_list, dim=0).to(device, non_blocking=True)  # [B,3,H,W]
@@ -763,8 +793,32 @@ def infer_one_video(
                     motion_tokens_batch = video_tokens[safe_indices].to(device, non_blocking=True)
                 outputs = model(x1_batch, motion_tokens=motion_tokens_batch)
             else:
-                x2_batch = torch.stack(x2_list, dim=0).to(device, non_blocking=True)  # [B,3,H,W]
-                outputs = model(x1_batch, x1_batch, x2_batch)
+                if len(motion_offsets) == 1:
+                    off = int(motion_offsets[0])
+                    x2_list: List[torch.Tensor] = []
+                    for i in idx_list:
+                        j = 0 if n == 1 else min(n - 1, i + off)
+                        with Image.open(frames[j]) as img2_raw:
+                            img2 = img2_raw.convert("RGB")
+                        _, x2 = transform(img2, img2)
+                        x2_list.append(x2)
+                    x2_batch = torch.stack(x2_list, dim=0).to(device, non_blocking=True)
+                    outputs = model(x1_batch, x1_batch, x2_batch)
+                else:
+                    token_sum = None
+                    for off in motion_offsets:
+                        x2_list: List[torch.Tensor] = []
+                        for i in idx_list:
+                            j = 0 if n == 1 else min(n - 1, i + int(off))
+                            with Image.open(frames[j]) as img2_raw:
+                                img2 = img2_raw.convert("RGB")
+                            _, x2 = transform(img2, img2)
+                            x2_list.append(x2)
+                        x2_batch = torch.stack(x2_list, dim=0).to(device, non_blocking=True)
+                        tokens_k = model.motion_encoder.extract_motion_tokens(x1_batch, x2_batch)
+                        token_sum = tokens_k if token_sum is None else (token_sum + tokens_k)
+                    motion_tokens_batch = token_sum / float(len(motion_offsets))
+                    outputs = model(x1_batch, motion_tokens=motion_tokens_batch)
             probs = torch.sigmoid(outputs["logits"]).squeeze(1).detach().cpu().numpy().tolist()
 
             frame_paths.extend(p1_list)
@@ -826,6 +880,7 @@ def main() -> None:
             cache_dir=args.motion_token_cache_dir,
             image_size=args.image_size,
             motion_stride=args.motion_stride,
+            motion_multi_offsets=args.motion_multi_offsets,
             max_frames_per_video=args.max_frames_per_video,
             rgb_compress_quality=args.rgb_compress_quality,
             flowformer_repo=model_args["flowformer_repo"],
@@ -838,7 +893,8 @@ def main() -> None:
         )
         print(
             f"[MotionTokenCache] enabled bucket={motion_token_cache.cache_bucket} "
-            f"dtype={args.motion_token_cache_dtype} refresh={bool(args.motion_token_cache_refresh)}"
+            f"dtype={args.motion_token_cache_dtype} refresh={bool(args.motion_token_cache_refresh)} "
+            f"offsets={motion_token_cache.motion_offsets}"
         )
 
     data_root = Path(args.data_root)
@@ -867,6 +923,7 @@ def main() -> None:
             model_args=model_args,
             image_size=args.image_size,
             motion_stride=args.motion_stride,
+            motion_multi_offsets=args.motion_multi_offsets,
             max_frames_per_video=args.max_frames_per_video,
             rgb_compress_quality=args.rgb_compress_quality,
         )
@@ -987,6 +1044,7 @@ def main() -> None:
                     video_dir=video_dir,
                     image_size=args.image_size,
                     motion_stride=args.motion_stride,
+                    motion_multi_offsets=args.motion_multi_offsets,
                     max_frames_per_video=args.max_frames_per_video,
                     batch_size=args.batch_size,
                     rgb_compress_quality=args.rgb_compress_quality,
@@ -1107,6 +1165,7 @@ def main() -> None:
         "num_fake": int(n_fake),
         "num_real": int(n_real),
         "threshold": args.threshold,
+        "motion_multi_offsets": [int(x) for x in normalize_motion_offsets(args.motion_stride, args.motion_multi_offsets)],
         "video_agg_method": str(args.video_agg_method),
         "video_agg_topk_ratio": float(args.video_agg_topk_ratio),
         "video_agg_topk_min": int(args.video_agg_topk_min),
