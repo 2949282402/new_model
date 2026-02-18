@@ -64,6 +64,15 @@ def normalize_motion_offsets(motion_stride: int, motion_multi_offsets: Optional[
     return dedup
 
 
+def normalize_two_weights(weight_rgb: float, weight_flow: float) -> Tuple[float, float]:
+    w_rgb = max(0.0, float(weight_rgb))
+    w_flow = max(0.0, float(weight_flow))
+    s = w_rgb + w_flow
+    if s <= 0:
+        return 0.5, 0.5
+    return w_rgb / s, w_flow / s
+
+
 def parse_args() -> argparse.Namespace:
     cfg = get_default_config()
     data_cfg = cfg["data"]
@@ -86,6 +95,62 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--video_agg_topk_min", type=int, default=int(test_cfg.get("video_agg_topk_min", 3)))
     parser.add_argument("--video_agg_topk_max", type=int, default=int(test_cfg.get("video_agg_topk_max", 32)))
     parser.add_argument("--video_agg_hybrid_alpha", type=float, default=float(test_cfg.get("video_agg_hybrid_alpha", 0.7)))
+    parser.add_argument(
+        "--rgb_video_agg_method",
+        type=str,
+        default=str(test_cfg.get("rgb_video_agg_method", test_cfg.get("video_agg_method", "topk_mean"))),
+        choices=["mean", "topk_mean", "hybrid_topk_mean"],
+        help="Independent mode RGB branch video aggregation method.",
+    )
+    parser.add_argument(
+        "--rgb_video_agg_topk_ratio",
+        type=float,
+        default=float(test_cfg.get("rgb_video_agg_topk_ratio", test_cfg.get("video_agg_topk_ratio", 0.1))),
+    )
+    parser.add_argument(
+        "--rgb_video_agg_topk_min",
+        type=int,
+        default=int(test_cfg.get("rgb_video_agg_topk_min", test_cfg.get("video_agg_topk_min", 3))),
+    )
+    parser.add_argument(
+        "--rgb_video_agg_topk_max",
+        type=int,
+        default=int(test_cfg.get("rgb_video_agg_topk_max", test_cfg.get("video_agg_topk_max", 32))),
+    )
+    parser.add_argument(
+        "--rgb_video_agg_hybrid_alpha",
+        type=float,
+        default=float(test_cfg.get("rgb_video_agg_hybrid_alpha", test_cfg.get("video_agg_hybrid_alpha", 0.7))),
+    )
+    parser.add_argument(
+        "--flow_video_agg_method",
+        type=str,
+        default=str(test_cfg.get("flow_video_agg_method", test_cfg.get("video_agg_method", "topk_mean"))),
+        choices=["mean", "topk_mean", "hybrid_topk_mean"],
+        help="Independent mode Flow branch video aggregation method.",
+    )
+    parser.add_argument(
+        "--flow_video_agg_topk_ratio",
+        type=float,
+        default=float(test_cfg.get("flow_video_agg_topk_ratio", test_cfg.get("video_agg_topk_ratio", 0.1))),
+    )
+    parser.add_argument(
+        "--flow_video_agg_topk_min",
+        type=int,
+        default=int(test_cfg.get("flow_video_agg_topk_min", test_cfg.get("video_agg_topk_min", 3))),
+    )
+    parser.add_argument(
+        "--flow_video_agg_topk_max",
+        type=int,
+        default=int(test_cfg.get("flow_video_agg_topk_max", test_cfg.get("video_agg_topk_max", 32))),
+    )
+    parser.add_argument(
+        "--flow_video_agg_hybrid_alpha",
+        type=float,
+        default=float(test_cfg.get("flow_video_agg_hybrid_alpha", test_cfg.get("video_agg_hybrid_alpha", 0.7))),
+    )
+    parser.add_argument("--branch_fuse_weight_rgb", type=float, default=float(test_cfg.get("branch_fuse_weight_rgb", 0.5)))
+    parser.add_argument("--branch_fuse_weight_flow", type=float, default=float(test_cfg.get("branch_fuse_weight_flow", 0.5)))
 
     parser.add_argument("--batch_size", type=int, default=test_cfg["batch_size"])
     parser.add_argument("--num_workers", type=int, default=test_cfg["num_workers"])  # kept for interface compatibility
@@ -115,6 +180,12 @@ def parse_args() -> argparse.Namespace:
     bool_action = getattr(argparse, "BooleanOptionalAction", None)
     if bool_action is not None:
         parser.add_argument(
+            "--independent_branch_agg",
+            action=bool_action,
+            default=bool(test_cfg.get("independent_branch_agg", False)),
+            help="In independent mode, aggregate RGB/Flow branches separately and then fuse.",
+        )
+        parser.add_argument(
             "--balanced_1to1",
             action=bool_action,
             default=test_cfg["balanced_1to1"],
@@ -133,6 +204,10 @@ def parse_args() -> argparse.Namespace:
             help="Ignore old cache and recompute.",
         )
     else:
+        parser.add_argument("--independent_branch_agg", dest="independent_branch_agg", action="store_true")
+        parser.add_argument("--no-independent_branch_agg", dest="independent_branch_agg", action="store_false")
+        parser.set_defaults(independent_branch_agg=bool(test_cfg.get("independent_branch_agg", False)))
+
         parser.add_argument("--balanced_1to1", dest="balanced_1to1", action="store_true")
         parser.add_argument("--no-balanced_1to1", dest="balanced_1to1", action="store_false")
         parser.set_defaults(balanced_1to1=test_cfg["balanced_1to1"])
@@ -423,6 +498,7 @@ def build_cache_bucket(
         ckpt_mtime = 0
 
     signature_obj = {
+        "cache_schema": "video_cache_v2_with_branch_probs",
         "checkpoint": str(ckpt_resolved),
         "checkpoint_mtime_ns": ckpt_mtime,
         "fusion_mode": model_args["fusion_mode"],
@@ -744,6 +820,19 @@ def infer_one_video(
     video_agg_topk_min: int = 3,
     video_agg_topk_max: int = 32,
     video_agg_hybrid_alpha: float = 0.7,
+    independent_branch_agg: bool = False,
+    rgb_video_agg_method: str = "topk_mean",
+    rgb_video_agg_topk_ratio: float = 0.1,
+    rgb_video_agg_topk_min: int = 3,
+    rgb_video_agg_topk_max: int = 32,
+    rgb_video_agg_hybrid_alpha: float = 0.7,
+    flow_video_agg_method: str = "topk_mean",
+    flow_video_agg_topk_ratio: float = 0.1,
+    flow_video_agg_topk_min: int = 3,
+    flow_video_agg_topk_max: int = 32,
+    flow_video_agg_hybrid_alpha: float = 0.7,
+    branch_fuse_weight_rgb: float = 0.5,
+    branch_fuse_weight_flow: float = 0.5,
     motion_token_cache: Optional[MotionTokenCacheManager] = None,
 ) -> Dict:
     frames = list_image_files(video_dir)
@@ -768,6 +857,10 @@ def infer_one_video(
 
     frame_paths: List[str] = []
     frame_probs: List[float] = []
+    frame_probs_rgb: List[float] = []
+    frame_probs_flow: List[float] = []
+    w_rgb, w_flow = normalize_two_weights(branch_fuse_weight_rgb, branch_fuse_weight_flow)
+    branch_agg_enabled = bool(independent_branch_agg)
 
     with torch.no_grad():
         for start in range(0, len(center_indices), max(1, int(batch_size))):
@@ -820,23 +913,65 @@ def infer_one_video(
                     motion_tokens_batch = token_sum / float(len(motion_offsets))
                     outputs = model(x1_batch, motion_tokens=motion_tokens_batch)
             probs = torch.sigmoid(outputs["logits"]).squeeze(1).detach().cpu().numpy().tolist()
+            if "aux_logits" in outputs:
+                logit_rgb, logit_flow = outputs["aux_logits"]
+                probs_rgb = torch.sigmoid(logit_rgb).squeeze(1).detach().cpu().numpy().tolist()
+                probs_flow = torch.sigmoid(logit_flow).squeeze(1).detach().cpu().numpy().tolist()
+            else:
+                probs_rgb = []
+                probs_flow = []
 
             frame_paths.extend(p1_list)
             frame_probs.extend([float(p) for p in probs])
+            if probs_rgb and probs_flow:
+                frame_probs_rgb.extend([float(p) for p in probs_rgb])
+                frame_probs_flow.extend([float(p) for p in probs_flow])
 
-    video_prob = aggregate_video_probability(
-        frame_probs=frame_probs,
-        method=video_agg_method,
-        topk_ratio=video_agg_topk_ratio,
-        topk_min=video_agg_topk_min,
-        topk_max=video_agg_topk_max,
-        hybrid_alpha=video_agg_hybrid_alpha,
+    use_branch_agg = (
+        branch_agg_enabled
+        and (len(frame_probs_rgb) == len(frame_probs))
+        and (len(frame_probs_flow) == len(frame_probs))
+        and (len(frame_probs) > 0)
     )
+    video_prob_rgb = float("nan")
+    video_prob_flow = float("nan")
+    if use_branch_agg:
+        video_prob_rgb = aggregate_video_probability(
+            frame_probs=frame_probs_rgb,
+            method=rgb_video_agg_method,
+            topk_ratio=rgb_video_agg_topk_ratio,
+            topk_min=rgb_video_agg_topk_min,
+            topk_max=rgb_video_agg_topk_max,
+            hybrid_alpha=rgb_video_agg_hybrid_alpha,
+        )
+        video_prob_flow = aggregate_video_probability(
+            frame_probs=frame_probs_flow,
+            method=flow_video_agg_method,
+            topk_ratio=flow_video_agg_topk_ratio,
+            topk_min=flow_video_agg_topk_min,
+            topk_max=flow_video_agg_topk_max,
+            hybrid_alpha=flow_video_agg_hybrid_alpha,
+        )
+        video_prob = float(w_rgb * video_prob_rgb + w_flow * video_prob_flow)
+    else:
+        video_prob = aggregate_video_probability(
+            frame_probs=frame_probs,
+            method=video_agg_method,
+            topk_ratio=video_agg_topk_ratio,
+            topk_min=video_agg_topk_min,
+            topk_max=video_agg_topk_max,
+            hybrid_alpha=video_agg_hybrid_alpha,
+        )
     return {
         "frame_paths": frame_paths,
         "frame_probs": frame_probs,
+        "frame_probs_rgb": frame_probs_rgb,
+        "frame_probs_flow": frame_probs_flow,
         "num_frames": len(frame_probs),
         "video_prob": video_prob,
+        "video_prob_rgb": video_prob_rgb,
+        "video_prob_flow": video_prob_flow,
+        "use_branch_agg": bool(use_branch_agg),
     }
 
 
@@ -871,6 +1006,17 @@ def main() -> None:
         f"min={int(args.video_agg_topk_min)},max={int(args.video_agg_topk_max)},"
         f"alpha={float(args.video_agg_hybrid_alpha):.2f})"
     )
+    if bool(args.independent_branch_agg):
+        w_rgb, w_flow = normalize_two_weights(args.branch_fuse_weight_rgb, args.branch_fuse_weight_flow)
+        print(
+            f"[BranchAgg] rgb={args.rgb_video_agg_method}(ratio={float(args.rgb_video_agg_topk_ratio):.3f},"
+            f"min={int(args.rgb_video_agg_topk_min)},max={int(args.rgb_video_agg_topk_max)},"
+            f"alpha={float(args.rgb_video_agg_hybrid_alpha):.2f}) "
+            f"flow={args.flow_video_agg_method}(ratio={float(args.flow_video_agg_topk_ratio):.3f},"
+            f"min={int(args.flow_video_agg_topk_min)},max={int(args.flow_video_agg_topk_max)},"
+            f"alpha={float(args.flow_video_agg_hybrid_alpha):.2f}) "
+            f"fuse_w=({w_rgb:.3f},{w_flow:.3f})"
+        )
 
     motion_token_cache: Optional[MotionTokenCacheManager] = None
     if bool(args.use_motion_token_cache):
@@ -1053,6 +1199,19 @@ def main() -> None:
                     video_agg_topk_min=args.video_agg_topk_min,
                     video_agg_topk_max=args.video_agg_topk_max,
                     video_agg_hybrid_alpha=args.video_agg_hybrid_alpha,
+                    independent_branch_agg=bool(args.independent_branch_agg),
+                    rgb_video_agg_method=args.rgb_video_agg_method,
+                    rgb_video_agg_topk_ratio=args.rgb_video_agg_topk_ratio,
+                    rgb_video_agg_topk_min=args.rgb_video_agg_topk_min,
+                    rgb_video_agg_topk_max=args.rgb_video_agg_topk_max,
+                    rgb_video_agg_hybrid_alpha=args.rgb_video_agg_hybrid_alpha,
+                    flow_video_agg_method=args.flow_video_agg_method,
+                    flow_video_agg_topk_ratio=args.flow_video_agg_topk_ratio,
+                    flow_video_agg_topk_min=args.flow_video_agg_topk_min,
+                    flow_video_agg_topk_max=args.flow_video_agg_topk_max,
+                    flow_video_agg_hybrid_alpha=args.flow_video_agg_hybrid_alpha,
+                    branch_fuse_weight_rgb=args.branch_fuse_weight_rgb,
+                    branch_fuse_weight_flow=args.branch_fuse_weight_flow,
                     motion_token_cache=motion_token_cache,
                 )
                 mem_cache[key] = pred_obj
@@ -1067,8 +1226,13 @@ def main() -> None:
                                 "video_dir": str(video_dir.resolve()),
                                 "frame_paths": pred_obj["frame_paths"],
                                 "frame_probs": pred_obj["frame_probs"],
+                                "frame_probs_rgb": pred_obj.get("frame_probs_rgb", []),
+                                "frame_probs_flow": pred_obj.get("frame_probs_flow", []),
                                 "num_frames": int(pred_obj["num_frames"]),
                                 "video_prob": float(pred_obj["video_prob"]),
+                                "video_prob_rgb": float(pred_obj.get("video_prob_rgb", float("nan"))),
+                                "video_prob_flow": float(pred_obj.get("video_prob_flow", float("nan"))),
+                                "use_branch_agg": bool(pred_obj.get("use_branch_agg", False)),
                                 "rgb_compress_quality": int(args.rgb_compress_quality),
                             },
                         }
@@ -1080,15 +1244,43 @@ def main() -> None:
 
             frame_paths = pred_obj.get("frame_paths", [])
             frame_probs = [float(x) for x in pred_obj.get("frame_probs", [])]
+            frame_probs_rgb = [float(x) for x in pred_obj.get("frame_probs_rgb", [])]
+            frame_probs_flow = [float(x) for x in pred_obj.get("frame_probs_flow", [])]
             num_frames = int(pred_obj.get("num_frames", len(frame_probs)))
-            video_prob = aggregate_video_probability(
-                frame_probs=frame_probs,
-                method=args.video_agg_method,
-                topk_ratio=args.video_agg_topk_ratio,
-                topk_min=args.video_agg_topk_min,
-                topk_max=args.video_agg_topk_max,
-                hybrid_alpha=args.video_agg_hybrid_alpha,
+            use_branch_agg = (
+                bool(args.independent_branch_agg)
+                and (len(frame_probs_rgb) == len(frame_probs))
+                and (len(frame_probs_flow) == len(frame_probs))
+                and (len(frame_probs) > 0)
             )
+            if use_branch_agg:
+                video_prob_rgb = aggregate_video_probability(
+                    frame_probs=frame_probs_rgb,
+                    method=args.rgb_video_agg_method,
+                    topk_ratio=args.rgb_video_agg_topk_ratio,
+                    topk_min=args.rgb_video_agg_topk_min,
+                    topk_max=args.rgb_video_agg_topk_max,
+                    hybrid_alpha=args.rgb_video_agg_hybrid_alpha,
+                )
+                video_prob_flow = aggregate_video_probability(
+                    frame_probs=frame_probs_flow,
+                    method=args.flow_video_agg_method,
+                    topk_ratio=args.flow_video_agg_topk_ratio,
+                    topk_min=args.flow_video_agg_topk_min,
+                    topk_max=args.flow_video_agg_topk_max,
+                    hybrid_alpha=args.flow_video_agg_hybrid_alpha,
+                )
+                w_rgb, w_flow = normalize_two_weights(args.branch_fuse_weight_rgb, args.branch_fuse_weight_flow)
+                video_prob = float(w_rgb * video_prob_rgb + w_flow * video_prob_flow)
+            else:
+                video_prob = aggregate_video_probability(
+                    frame_probs=frame_probs,
+                    method=args.video_agg_method,
+                    topk_ratio=args.video_agg_topk_ratio,
+                    topk_min=args.video_agg_topk_min,
+                    topk_max=args.video_agg_topk_max,
+                    hybrid_alpha=args.video_agg_hybrid_alpha,
+                )
             video_pred = int(video_prob >= args.threshold) if np.isfinite(video_prob) else 0
             source_video = str(video_dir.resolve())
 
@@ -1171,6 +1363,19 @@ def main() -> None:
         "video_agg_topk_min": int(args.video_agg_topk_min),
         "video_agg_topk_max": int(args.video_agg_topk_max),
         "video_agg_hybrid_alpha": float(args.video_agg_hybrid_alpha),
+        "independent_branch_agg": bool(args.independent_branch_agg),
+        "rgb_video_agg_method": str(args.rgb_video_agg_method),
+        "rgb_video_agg_topk_ratio": float(args.rgb_video_agg_topk_ratio),
+        "rgb_video_agg_topk_min": int(args.rgb_video_agg_topk_min),
+        "rgb_video_agg_topk_max": int(args.rgb_video_agg_topk_max),
+        "rgb_video_agg_hybrid_alpha": float(args.rgb_video_agg_hybrid_alpha),
+        "flow_video_agg_method": str(args.flow_video_agg_method),
+        "flow_video_agg_topk_ratio": float(args.flow_video_agg_topk_ratio),
+        "flow_video_agg_topk_min": int(args.flow_video_agg_topk_min),
+        "flow_video_agg_topk_max": int(args.flow_video_agg_topk_max),
+        "flow_video_agg_hybrid_alpha": float(args.flow_video_agg_hybrid_alpha),
+        "branch_fuse_weight_rgb": float(args.branch_fuse_weight_rgb),
+        "branch_fuse_weight_flow": float(args.branch_fuse_weight_flow),
         "rgb_compress_quality": int(args.rgb_compress_quality),
         "cache_hit_mem": int(cache_hit_mem),
         "cache_hit_disk": int(cache_hit_disk),

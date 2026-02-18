@@ -86,6 +86,15 @@ def normalize_motion_offsets(motion_stride: int, motion_multi_offsets: Optional[
     return dedup
 
 
+def normalize_two_weights(weight_rgb: float, weight_flow: float) -> Tuple[float, float]:
+    w_rgb = max(0.0, float(weight_rgb))
+    w_flow = max(0.0, float(weight_flow))
+    s = w_rgb + w_flow
+    if s <= 0:
+        return 0.5, 0.5
+    return w_rgb / s, w_flow / s
+
+
 def infer_class_dirs(root: Path) -> List[Tuple[Path, int]]:
     candidates = [p for p in root.iterdir() if p.is_dir()]
     if not candidates:
@@ -660,6 +669,19 @@ def evaluate(
     video_agg_topk_min: int = 3,
     video_agg_topk_max: int = 32,
     video_agg_hybrid_alpha: float = 0.7,
+    independent_branch_agg: bool = False,
+    rgb_video_agg_method: str = "topk_mean",
+    rgb_video_agg_topk_ratio: float = 0.1,
+    rgb_video_agg_topk_min: int = 3,
+    rgb_video_agg_topk_max: int = 32,
+    rgb_video_agg_hybrid_alpha: float = 0.7,
+    flow_video_agg_method: str = "topk_mean",
+    flow_video_agg_topk_ratio: float = 0.1,
+    flow_video_agg_topk_min: int = 3,
+    flow_video_agg_topk_max: int = 32,
+    flow_video_agg_hybrid_alpha: float = 0.7,
+    branch_fuse_weight_rgb: float = 0.5,
+    branch_fuse_weight_flow: float = 0.5,
     motion_token_cache: Optional[MotionTokenCacheManager] = None,
 ) -> Tuple[Dict[str, float], List[Dict], List[Dict]]:
     model.eval()
@@ -667,7 +689,11 @@ def evaluate(
     probs_all: List[float] = []
     labels_all: List[float] = []
     video_pool: Dict[str, List[Tuple[float, float]]] = {}
+    video_pool_rgb: Dict[str, List[float]] = {}
+    video_pool_flow: Dict[str, List[float]] = {}
     frame_rows: List[Dict] = []
+    use_branch_agg = bool(independent_branch_agg and str(fusion_mode) == "independent")
+    w_rgb, w_flow = normalize_two_weights(branch_fuse_weight_rgb, branch_fuse_weight_flow)
 
     for batch in loader:
         img_spatial = batch["img_spatial"].to(device, non_blocking=True)
@@ -699,10 +725,23 @@ def evaluate(
         probs_all.extend(probs_np)
         labels_all.extend(labels_np)
 
-        for path, vid, p, y in zip(batch["path"], batch["video_id"], probs_np, labels_np):
+        probs_rgb_np: Optional[List[float]] = None
+        probs_flow_np: Optional[List[float]] = None
+        if use_branch_agg and ("aux_logits" in outputs):
+            logit_rgb, logit_flow = outputs["aux_logits"]
+            probs_rgb_np = torch.sigmoid(logit_rgb).squeeze(1).detach().cpu().numpy().tolist()
+            probs_flow_np = torch.sigmoid(logit_flow).squeeze(1).detach().cpu().numpy().tolist()
+
+        for idx, (path, vid, p, y) in enumerate(zip(batch["path"], batch["video_id"], probs_np, labels_np)):
             if vid not in video_pool:
                 video_pool[vid] = []
             video_pool[vid].append((float(p), float(y)))
+            if probs_rgb_np is not None and probs_flow_np is not None:
+                if vid not in video_pool_rgb:
+                    video_pool_rgb[vid] = []
+                    video_pool_flow[vid] = []
+                video_pool_rgb[vid].append(float(probs_rgb_np[idx]))
+                video_pool_flow[vid].append(float(probs_flow_np[idx]))
             frame_rows.append(
                 {
                     "path": path,
@@ -720,14 +759,35 @@ def evaluate(
     video_labels: List[float] = []
     video_rows: List[Dict] = []
     for _, items in video_pool.items():
-        p = aggregate_video_probability(
-            frame_probs=[float(it[0]) for it in items],
-            method=video_agg_method,
-            topk_ratio=video_agg_topk_ratio,
-            topk_min=video_agg_topk_min,
-            topk_max=video_agg_topk_max,
-            hybrid_alpha=video_agg_hybrid_alpha,
-        )
+        p_rgb = float("nan")
+        p_flow = float("nan")
+        if use_branch_agg and (_ in video_pool_rgb) and (_ in video_pool_flow):
+            p_rgb = aggregate_video_probability(
+                frame_probs=video_pool_rgb[_],
+                method=rgb_video_agg_method,
+                topk_ratio=rgb_video_agg_topk_ratio,
+                topk_min=rgb_video_agg_topk_min,
+                topk_max=rgb_video_agg_topk_max,
+                hybrid_alpha=rgb_video_agg_hybrid_alpha,
+            )
+            p_flow = aggregate_video_probability(
+                frame_probs=video_pool_flow[_],
+                method=flow_video_agg_method,
+                topk_ratio=flow_video_agg_topk_ratio,
+                topk_min=flow_video_agg_topk_min,
+                topk_max=flow_video_agg_topk_max,
+                hybrid_alpha=flow_video_agg_hybrid_alpha,
+            )
+            p = float(w_rgb * p_rgb + w_flow * p_flow)
+        else:
+            p = aggregate_video_probability(
+                frame_probs=[float(it[0]) for it in items],
+                method=video_agg_method,
+                topk_ratio=video_agg_topk_ratio,
+                topk_min=video_agg_topk_min,
+                topk_max=video_agg_topk_max,
+                hybrid_alpha=video_agg_hybrid_alpha,
+            )
         y = float(round(np.mean([it[1] for it in items])))
         video_probs.append(p)
         video_labels.append(y)
@@ -1008,6 +1068,81 @@ def parse_args() -> argparse.Namespace:
     )
     if bool_action is not None:
         parser.add_argument(
+            "--val_independent_branch_agg",
+            action=bool_action,
+            default=bool(train_cfg.get("val_independent_branch_agg", False)),
+            help="In independent mode, aggregate RGB/Flow branches separately then fuse at video level.",
+        )
+    else:
+        parser.add_argument("--val_independent_branch_agg", dest="val_independent_branch_agg", action="store_true")
+        parser.add_argument("--no-val_independent_branch_agg", dest="val_independent_branch_agg", action="store_false")
+        parser.set_defaults(val_independent_branch_agg=bool(train_cfg.get("val_independent_branch_agg", False)))
+    parser.add_argument(
+        "--val_rgb_video_agg_method",
+        type=str,
+        default=str(train_cfg.get("val_rgb_video_agg_method", train_cfg.get("val_video_agg_method", "topk_mean"))),
+        choices=["mean", "topk_mean", "hybrid_topk_mean"],
+    )
+    parser.add_argument(
+        "--val_rgb_video_agg_topk_ratio",
+        type=float,
+        default=float(train_cfg.get("val_rgb_video_agg_topk_ratio", train_cfg.get("val_video_agg_topk_ratio", 0.1))),
+    )
+    parser.add_argument(
+        "--val_rgb_video_agg_topk_min",
+        type=int,
+        default=int(train_cfg.get("val_rgb_video_agg_topk_min", train_cfg.get("val_video_agg_topk_min", 3))),
+    )
+    parser.add_argument(
+        "--val_rgb_video_agg_topk_max",
+        type=int,
+        default=int(train_cfg.get("val_rgb_video_agg_topk_max", train_cfg.get("val_video_agg_topk_max", 32))),
+    )
+    parser.add_argument(
+        "--val_rgb_video_agg_hybrid_alpha",
+        type=float,
+        default=float(train_cfg.get("val_rgb_video_agg_hybrid_alpha", train_cfg.get("val_video_agg_hybrid_alpha", 0.7))),
+    )
+    parser.add_argument(
+        "--val_flow_video_agg_method",
+        type=str,
+        default=str(train_cfg.get("val_flow_video_agg_method", train_cfg.get("val_video_agg_method", "topk_mean"))),
+        choices=["mean", "topk_mean", "hybrid_topk_mean"],
+    )
+    parser.add_argument(
+        "--val_flow_video_agg_topk_ratio",
+        type=float,
+        default=float(train_cfg.get("val_flow_video_agg_topk_ratio", train_cfg.get("val_video_agg_topk_ratio", 0.1))),
+    )
+    parser.add_argument(
+        "--val_flow_video_agg_topk_min",
+        type=int,
+        default=int(train_cfg.get("val_flow_video_agg_topk_min", train_cfg.get("val_video_agg_topk_min", 3))),
+    )
+    parser.add_argument(
+        "--val_flow_video_agg_topk_max",
+        type=int,
+        default=int(train_cfg.get("val_flow_video_agg_topk_max", train_cfg.get("val_video_agg_topk_max", 32))),
+    )
+    parser.add_argument(
+        "--val_flow_video_agg_hybrid_alpha",
+        type=float,
+        default=float(
+            train_cfg.get("val_flow_video_agg_hybrid_alpha", train_cfg.get("val_video_agg_hybrid_alpha", 0.7))
+        ),
+    )
+    parser.add_argument(
+        "--val_branch_fuse_weight_rgb",
+        type=float,
+        default=float(train_cfg.get("val_branch_fuse_weight_rgb", 0.5)),
+    )
+    parser.add_argument(
+        "--val_branch_fuse_weight_flow",
+        type=float,
+        default=float(train_cfg.get("val_branch_fuse_weight_flow", 0.5)),
+    )
+    if bool_action is not None:
+        parser.add_argument(
             "--use_motion_token_cache",
             action=bool_action,
             default=bool(train_cfg.get("use_motion_token_cache", True)),
@@ -1256,6 +1391,17 @@ def main() -> None:
             f"max={int(args.val_video_agg_topk_max)} "
             f"alpha={float(args.val_video_agg_hybrid_alpha):.2f}"
         )
+        if bool(args.val_independent_branch_agg):
+            w_rgb, w_flow = normalize_two_weights(args.val_branch_fuse_weight_rgb, args.val_branch_fuse_weight_flow)
+            print(
+                f"[ValBranchAgg] rgb={args.val_rgb_video_agg_method}(ratio={float(args.val_rgb_video_agg_topk_ratio):.3f},"
+                f"min={int(args.val_rgb_video_agg_topk_min)},max={int(args.val_rgb_video_agg_topk_max)},"
+                f"alpha={float(args.val_rgb_video_agg_hybrid_alpha):.2f}) "
+                f"flow={args.val_flow_video_agg_method}(ratio={float(args.val_flow_video_agg_topk_ratio):.3f},"
+                f"min={int(args.val_flow_video_agg_topk_min)},max={int(args.val_flow_video_agg_topk_max)},"
+                f"alpha={float(args.val_flow_video_agg_hybrid_alpha):.2f}) "
+                f"fuse_w=({w_rgb:.3f},{w_flow:.3f})"
+            )
 
     if args.early_stop_metric == "loss" and best_metric is not None and best_metric < 0:
         # Compatibility with older checkpoints that initialized best_metric as -1.
@@ -1351,6 +1497,19 @@ def main() -> None:
                 video_agg_topk_min=args.val_video_agg_topk_min,
                 video_agg_topk_max=args.val_video_agg_topk_max,
                 video_agg_hybrid_alpha=args.val_video_agg_hybrid_alpha,
+                independent_branch_agg=bool(args.val_independent_branch_agg),
+                rgb_video_agg_method=args.val_rgb_video_agg_method,
+                rgb_video_agg_topk_ratio=args.val_rgb_video_agg_topk_ratio,
+                rgb_video_agg_topk_min=args.val_rgb_video_agg_topk_min,
+                rgb_video_agg_topk_max=args.val_rgb_video_agg_topk_max,
+                rgb_video_agg_hybrid_alpha=args.val_rgb_video_agg_hybrid_alpha,
+                flow_video_agg_method=args.val_flow_video_agg_method,
+                flow_video_agg_topk_ratio=args.val_flow_video_agg_topk_ratio,
+                flow_video_agg_topk_min=args.val_flow_video_agg_topk_min,
+                flow_video_agg_topk_max=args.val_flow_video_agg_topk_max,
+                flow_video_agg_hybrid_alpha=args.val_flow_video_agg_hybrid_alpha,
+                branch_fuse_weight_rgb=args.val_branch_fuse_weight_rgb,
+                branch_fuse_weight_flow=args.val_branch_fuse_weight_flow,
                 motion_token_cache=(motion_token_cache if use_motion_cache_for_val else None),
             )
             print(

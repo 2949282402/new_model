@@ -56,6 +56,19 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "val_video_agg_topk_min": 3,  # top-k 聚合的最小 k
         "val_video_agg_topk_max": 32,  # top-k 聚合的最大 k，0 表示不限制
         "val_video_agg_hybrid_alpha": 0.7,  # hybrid_topk_mean 权重：final=alpha*topk_mean+(1-alpha)*mean
+        "val_independent_branch_agg": False,  # independent 模式下验证是否启用 RGB/Flow 分支独立聚合再融合
+        "val_rgb_video_agg_method": "topk_mean",  # 验证时 RGB 分支视频聚合策略：mean / topk_mean / hybrid_topk_mean
+        "val_rgb_video_agg_topk_ratio": 0.2,  # 验证时 RGB 分支 top-k 比例
+        "val_rgb_video_agg_topk_min": 3,  # 验证时 RGB 分支 top-k 最小 k
+        "val_rgb_video_agg_topk_max": 32,  # 验证时 RGB 分支 top-k 最大 k，0 表示不限制
+        "val_rgb_video_agg_hybrid_alpha": 0.7,  # 验证时 RGB 分支 hybrid 权重
+        "val_flow_video_agg_method": "topk_mean",  # 验证时 Flow 分支视频聚合策略：mean / topk_mean / hybrid_topk_mean
+        "val_flow_video_agg_topk_ratio": 0.2,  # 验证时 Flow 分支 top-k 比例
+        "val_flow_video_agg_topk_min": 3,  # 验证时 Flow 分支 top-k 最小 k
+        "val_flow_video_agg_topk_max": 32,  # 验证时 Flow 分支 top-k 最大 k，0 表示不限制
+        "val_flow_video_agg_hybrid_alpha": 0.7,  # 验证时 Flow 分支 hybrid 权重
+        "val_branch_fuse_weight_rgb": 0.5,  # 验证时 RGB 分支融合权重（会自动归一化）
+        "val_branch_fuse_weight_flow": 0.5,  # 验证时 Flow 分支融合权重（会自动归一化）
         "use_motion_token_cache": True,  # 训练时是否优先读取 FlowFormer token 缓存
         "motion_token_cache_dir": "./data/exp/_shared/flowformer_token_cache",  # 训练读取/写入的 FlowFormer token 缓存目录
         "motion_token_cache_refresh": False,  # 是否忽略已有 token 缓存并强制重算
@@ -92,6 +105,19 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "video_agg_topk_min": 3,  # top-k 聚合的最小 k
         "video_agg_topk_max": 32,  # top-k 聚合的最大 k，0 表示不限制
         "video_agg_hybrid_alpha": 0.7,  # hybrid_topk_mean 权重：final=alpha*topk_mean+(1-alpha)*mean
+        "independent_branch_agg": False,  # independent 模式下测试是否启用 RGB/Flow 分支独立聚合再融合
+        "rgb_video_agg_method": "topk_mean",  # 测试时 RGB 分支视频聚合策略：mean / topk_mean / hybrid_topk_mean
+        "rgb_video_agg_topk_ratio": 0.1,  # 测试时 RGB 分支 top-k 比例
+        "rgb_video_agg_topk_min": 3,  # 测试时 RGB 分支 top-k 最小 k
+        "rgb_video_agg_topk_max": 32,  # 测试时 RGB 分支 top-k 最大 k，0 表示不限制
+        "rgb_video_agg_hybrid_alpha": 0.7,  # 测试时 RGB 分支 hybrid 权重
+        "flow_video_agg_method": "topk_mean",  # 测试时 Flow 分支视频聚合策略：mean / topk_mean / hybrid_topk_mean
+        "flow_video_agg_topk_ratio": 0.1,  # 测试时 Flow 分支 top-k 比例
+        "flow_video_agg_topk_min": 3,  # 测试时 Flow 分支 top-k 最小 k
+        "flow_video_agg_topk_max": 32,  # 测试时 Flow 分支 top-k 最大 k，0 表示不限制
+        "flow_video_agg_hybrid_alpha": 0.7,  # 测试时 Flow 分支 hybrid 权重
+        "branch_fuse_weight_rgb": 0.5,  # 测试时 RGB 分支融合权重（会自动归一化）
+        "branch_fuse_weight_flow": 0.5,  # 测试时 Flow 分支融合权重（会自动归一化）
         "use_motion_token_cache": True,  # 测试时是否优先读取 FlowFormer token 缓存
         "motion_token_cache_dir": "./data/exp/_shared/flowformer_token_cache",  # 测试读取/写入的 FlowFormer token 缓存目录
         "motion_token_cache_refresh": False,  # 测试时是否忽略 token 缓存并强制重算
