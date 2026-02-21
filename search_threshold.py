@@ -190,13 +190,34 @@ def main() -> None:
         for r in sorted(rows, key=lambda x: x["threshold"]):
             writer.writerow(r)
 
+    # Compute threshold-independent AUC metric.
+    auc_value = float("nan")
+    try:
+        from sklearn.metrics import roc_auc_score
+        if len(set(labels.tolist())) >= 2:
+            auc_value = float(roc_auc_score(labels, probs))
+    except Exception:
+        pass
+
+    # Best threshold full metrics breakdown.
+    best_all_metrics = {
+        k: float(best[k])
+        for k in ["threshold", "acc", "precision", "recall", "f1", "balanced_acc", "youden_j"]
+    }
+    best_all_metrics["tp"] = int(best["tp"])
+    best_all_metrics["tn"] = int(best["tn"])
+    best_all_metrics["fp"] = int(best["fp"])
+    best_all_metrics["fn"] = int(best["fn"])
+
     summary = {
         "input_csv": str(input_csv),
         "num_samples": int(labels.shape[0]),
         "positive_ratio": float(np.mean(labels > 0.5)),
+        "auc": auc_value,
         "opt_metric": metric_name,
         "best_threshold": float(best["threshold"]),
         "best_metric_value": best_score,
+        "best_all_metrics": best_all_metrics,
         "recommended_range": [range_low, range_high],
         "near_best_delta": delta,
         "constraints": {
@@ -211,18 +232,21 @@ def main() -> None:
     with open(summary_out, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
+    print(f"\n{'='*60}")
     print(f"[Input] {input_csv}")
-    print(f"[Samples] N={labels.shape[0]} pos_ratio={summary['positive_ratio']:.4f}")
-    print(
-        f"[Best] metric={metric_name} threshold={summary['best_threshold']:.4f} "
-        f"value={summary['best_metric_value']:.6f}"
-    )
-    print(
-        f"[Range] [{range_low:.4f}, {range_high:.4f}] "
-        f"(metric >= best - {delta:.6f})"
-    )
-    print(f"[Saved] curve csv: {curve_out}")
+    print(f"[Samples] N={labels.shape[0]}  positive(fake)={int(np.sum(labels > 0.5))}  negative(real)={int(np.sum(labels <= 0.5))}  pos_ratio={summary['positive_ratio']:.4f}")
+    print(f"[AUC] {auc_value:.6f}  (threshold-independent)")
+    print(f"{'='*60}")
+    print(f"[Optimal Metric] {metric_name}")
+    print(f"[Best Threshold] {best['threshold']:.4f}  ({metric_name}={best_score:.6f})")
+    print(f"  acc={best['acc']:.4f}  precision={best['precision']:.4f}  recall={best['recall']:.4f}  f1={best['f1']:.4f}")
+    print(f"  balanced_acc={best['balanced_acc']:.4f}  youden_j={best['youden_j']:.4f}")
+    print(f"  TP={int(best['tp'])}  TN={int(best['tn'])}  FP={int(best['fp'])}  FN={int(best['fn'])}")
+    print(f"{'='*60}")
+    print(f"[Recommended Range] [{range_low:.4f}, {range_high:.4f}]  ({metric_name} >= {best_score:.6f} - {delta:.6f})")
+    print(f"[Saved] curve csv  : {curve_out}")
     print(f"[Saved] summary json: {summary_out}")
+    print(f"{'='*60}\n")
 
 
 if __name__ == "__main__":

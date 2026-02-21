@@ -1,8 +1,9 @@
 import sys
 import warnings
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,6 +27,87 @@ def _torch_load_compat(path: str, map_location: str = "cpu", weights_only: Optio
         return torch.load(path, **kwargs)
 
 
+class SRMConv(nn.Module):
+    """Fixed SRM (Steganalysis Rich Model) high-pass filters.
+
+    Extracts noise residuals from RGB images using 3 classical SRM kernels.
+    All weights are frozen (not learnable) — the filters only expose noise-level
+    manipulation traces that are generator-agnostic.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        # 3 classical SRM kernels (5x5), applied identically to each RGB channel.
+        q = [
+            # Kernel 1: 2nd-order horizontal finite difference
+            np.array([
+                [0, 0,  0, 0, 0],
+                [0, 0,  0, 0, 0],
+                [0, 1, -2, 1, 0],
+                [0, 0,  0, 0, 0],
+                [0, 0,  0, 0, 0],
+            ], dtype=np.float32),
+            # Kernel 2: SQUARE 5x5
+            np.array([
+                [-1,  2, -2,  2, -1],
+                [ 2, -6,  8, -6,  2],
+                [-2,  8,-12,  8, -2],
+                [ 2, -6,  8, -6,  2],
+                [-1,  2, -2,  2, -1],
+            ], dtype=np.float32) / 12.0,
+            # Kernel 3: EDGE 3x3 centred in 5x5
+            np.array([
+                [0,  0,  0,  0, 0],
+                [0, -1,  2, -1, 0],
+                [0,  2, -4,  2, 0],
+                [0, -1,  2, -1, 0],
+                [0,  0,  0,  0, 0],
+            ], dtype=np.float32) / 4.0,
+        ]
+        # Build weight tensor: [out_channels=3, in_channels=3, 5, 5]
+        # Each kernel is shared across R/G/B (weight = kernel/3 per channel).
+        weight = torch.zeros(len(q), 3, 5, 5)
+        for i, kernel in enumerate(q):
+            k = torch.from_numpy(kernel)
+            for c in range(3):
+                weight[i, c] = k / 3.0
+        self.conv = nn.Conv2d(3, len(q), kernel_size=5, padding=2, bias=False)
+        self.conv.weight = nn.Parameter(weight, requires_grad=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, 3, H, W] -> [B, 3, H, W] noise residual
+        return self.conv(x)
+
+
+class NoiseEncoder(nn.Module):
+    """Lightweight CNN that maps SRM noise residuals to a feature vector."""
+
+    def __init__(self, in_channels: int = 3, out_dim: int = 512) -> None:
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(in_channels, 32, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+        )
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.proj = nn.Linear(256, out_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, C_in, H, W] -> [B, out_dim]
+        x = self.features(x)
+        x = self.pool(x).flatten(1)
+        return self.proj(x)
+
+
 class HFRI(nn.Module):
     """
     High-Frequency Residual Injection.
@@ -42,6 +124,7 @@ class HFRI(nn.Module):
         self.remove_ratio = remove_ratio
         self.mode = mode
         self.use_relu = use_relu
+        self.alpha = nn.Parameter(torch.tensor(0.1))
         self._dct_cache: Dict[Tuple[int, str, str], torch.Tensor] = {}
 
     def _get_dct_basis(self, n: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
@@ -120,7 +203,7 @@ class HFRI(nn.Module):
 
         if self.use_relu:
             out = F.relu(out, inplace=True)
-        return out
+        return x + self.alpha * out
 
 
 class FCL(nn.Module):
@@ -151,8 +234,10 @@ class FCL(nn.Module):
 
 class ST_CrossAttention(nn.Module):
     """
-    Q = spatial feature, K/V = motion feature.
-    Inputs are vectors [B, C], internally treated as single-token sequences.
+    Cross-attention: motion feature queries spatial feature map.
+    Q = motion feature [B, C] -> unsqueeze to [B, 1, C]
+    K/V = spatial feature map [B, N, C]  (N = H'*W')
+    Output: fused feature [B, C], attention weights [B, N]
     """
 
     def __init__(self, dim: int, num_heads: int = 8, dropout: float = 0.1):
@@ -177,26 +262,23 @@ class ST_CrossAttention(nn.Module):
     def forward(
         self,
         q_feat: torch.Tensor,
-        k_feat: torch.Tensor,
-        v_feat: Optional[torch.Tensor] = None,
+        kv_feat: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # q_feat/k_feat/v_feat: [B, C]
-        if v_feat is None:
-            v_feat = k_feat
+        # q_feat: [B, C] (motion feature)
+        # kv_feat: [B, N, C] (spatial feature map tokens)
+        q = self.norm_q(q_feat).unsqueeze(1)  # [B, 1, C]
+        kv = self.norm_kv(kv_feat)             # [B, N, C]
 
-        q = self.norm_q(q_feat).unsqueeze(1)   # [B, 1, C]
-        k = self.norm_kv(k_feat).unsqueeze(1)  # [B, 1, C]
-        v = self.norm_kv(v_feat).unsqueeze(1)  # [B, 1, C]
-
-        attn_out, attn_weights = self.attn(q, k, v, need_weights=True)  # [B, 1, C], [B, 1, 1]
+        attn_out, attn_weights = self.attn(q, kv, kv, need_weights=True)  # [B, 1, C], [B, 1, N]
         fused = q_feat.unsqueeze(1) + attn_out  # [B, 1, C]
         fused = fused + self.ffn(self.norm_ffn(fused))  # [B, 1, C]
-        return fused.squeeze(1), attn_weights.squeeze(1)  # [B, C], [B, 1]
+        return fused.squeeze(1), attn_weights.squeeze(1)  # [B, C], [B, N]
 
 
 class SpatialFreqEncoder(nn.Module):
     """
     Spatial branch based on ResNet50 + HFRI + FCL(Layer2/Layer3).
+    Optionally fuses an SRM noise-residual branch for cross-generator robustness.
     """
 
     def __init__(
@@ -205,9 +287,15 @@ class SpatialFreqEncoder(nn.Module):
         use_resnet_imagenet: bool = False,
         hfri_mode: str = "fft",
         hfri_remove_ratio: float = 0.25,
+        use_srm: bool = False,
+        use_hfri: bool = True,
     ):
         super().__init__()
-        self.hfri = HFRI(remove_ratio=hfri_remove_ratio, mode=hfri_mode, use_relu=True)
+        self.use_srm = use_srm
+        self.use_hfri = use_hfri
+
+        if self.use_hfri:
+            self.hfri = HFRI(remove_ratio=hfri_remove_ratio, mode=hfri_mode, use_relu=True)
 
         weights = None
         if use_resnet_imagenet and ResNet50_Weights is not None:
@@ -227,13 +315,36 @@ class SpatialFreqEncoder(nn.Module):
         self.layer4 = backbone.layer4  # out channels: 2048
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
-        self.fcl2 = FCL(channels=512)
-        self.fcl3 = FCL(channels=1024)
+        if self.use_hfri:
+            self.fcl2 = FCL(channels=512)
+            self.fcl3 = FCL(channels=1024)
         self.proj = nn.Linear(2048, out_dim)
+        self.spatial_token_proj = nn.Linear(2048, out_dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # SRM noise-residual branch (optional)
+        if self.use_srm:
+            self.srm_conv = SRMConv()  # fixed filters, not learnable
+            self.noise_encoder = NoiseEncoder(in_channels=3, out_dim=out_dim)
+            self.spatial_noise_fuse = nn.Sequential(
+                nn.Linear(out_dim * 2, out_dim),
+                nn.ReLU(inplace=True),
+            )
+
+    def _fuse_noise(self, x_rgb: torch.Tensor, f_rgb: torch.Tensor) -> torch.Tensor:
+        """Fuse RGB spatial feature with SRM noise feature."""
+        noise_map = self.srm_conv(x_rgb)          # [B, 3, H, W]
+        f_noise = self.noise_encoder(noise_map)    # [B, C]
+        return self.spatial_noise_fuse(
+            torch.cat([f_rgb, f_noise], dim=-1),   # [B, 2C]
+        )                                          # [B, C]
+
+    def forward(
+        self, x: torch.Tensor, return_map: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         # x: [B, 3, H, W]
-        x = self.hfri(x)  # [B, 3, H, W]
+        x_rgb = x  # keep original for SRM branch
+        if self.use_hfri:
+            x = self.hfri(x)  # [B, 3, H, W]
 
         x = self.conv1(x)  # [B, 64, H/2, W/2]
         x = self.bn1(x)
@@ -242,14 +353,30 @@ class SpatialFreqEncoder(nn.Module):
 
         x = self.layer1(x)  # [B, 256, H/4, W/4]
         x = self.layer2(x)  # [B, 512, H/8, W/8]
-        x = self.fcl2(x)    # [B, 512, H/8, W/8]
+        if self.use_hfri:
+            x = self.fcl2(x)    # [B, 512, H/8, W/8]
 
         x = self.layer3(x)  # [B, 1024, H/16, W/16]
-        x = self.fcl3(x)    # [B, 1024, H/16, W/16]
+        if self.use_hfri:
+            x = self.fcl3(x)    # [B, 1024, H/16, W/16]
 
         x = self.layer4(x)  # [B, 2048, H/32, W/32]
+
+        if return_map:
+            # Return spatial feature map tokens for cross-attention
+            feat_map = x  # [B, 2048, H', W']
+            spatial_tokens = feat_map.flatten(2).permute(0, 2, 1)  # [B, H'*W', 2048]
+            spatial_tokens = self.spatial_token_proj(spatial_tokens)  # [B, H'*W', C]
+            f_spatial = self.avgpool(feat_map).flatten(1)  # [B, 2048]
+            f_spatial = self.proj(f_spatial)  # [B, C]
+            if self.use_srm:
+                f_spatial = self._fuse_noise(x_rgb, f_spatial)
+            return spatial_tokens, f_spatial
+
         x = self.avgpool(x).flatten(1)  # [B, 2048]
         f_spatial = self.proj(x)  # [B, C]
+        if self.use_srm:
+            f_spatial = self._fuse_noise(x_rgb, f_spatial)
         return f_spatial
 
 
@@ -491,6 +618,11 @@ class Enhanced_STF_Detector(nn.Module):
         flowformer_repo: str = "./FlowFormerPlusPlus-main",
         flowformer_ckpt: str = "./checkpoints/things.pth",
         require_flowformer: bool = True,
+        head_dropout: float = 0.3,
+        freeze_backbone_stages: int = 0,
+        use_srm: bool = False,
+        use_hfri: bool = True,
+        use_temporal: bool = True,
     ):
         super().__init__()
         if fusion_mode not in {"cross_attention", "independent"}:
@@ -500,36 +632,77 @@ class Enhanced_STF_Detector(nn.Module):
 
         self.fusion_mode = fusion_mode
         self.feature_dim = feature_dim
+        self.use_temporal = use_temporal
 
         self.spatial_encoder = SpatialFreqEncoder(
             out_dim=feature_dim,
             use_resnet_imagenet=use_resnet_imagenet,
             hfri_mode=hfri_mode,
             hfri_remove_ratio=0.25,
-        )
-        self.motion_encoder = MotionEncoder(
-            out_dim=feature_dim,
-            flowformer_repo=flowformer_repo,
-            flowformer_ckpt=flowformer_ckpt,
-            require_flowformer=require_flowformer,
+            use_srm=use_srm,
+            use_hfri=use_hfri,
         )
 
-        if self.fusion_mode == "cross_attention":
-            self.st_attention = ST_CrossAttention(dim=feature_dim, num_heads=8, dropout=0.1)
-            self.head_fusion = nn.Sequential(
-                nn.LayerNorm(feature_dim),
-                nn.Linear(feature_dim, num_classes),
+        # Freeze early backbone stages to prevent overfitting
+        if freeze_backbone_stages > 0:
+            self._freeze_backbone(freeze_backbone_stages)
+
+        if self.use_temporal:
+            self.motion_encoder = MotionEncoder(
+                out_dim=feature_dim,
+                flowformer_repo=flowformer_repo,
+                flowformer_ckpt=flowformer_ckpt,
+                require_flowformer=require_flowformer,
             )
+
+            if self.fusion_mode == "cross_attention":
+                self.st_attention = ST_CrossAttention(dim=feature_dim, num_heads=8, dropout=0.1)
+                self.fusion_gate = nn.Sequential(
+                    nn.Linear(feature_dim * 2, feature_dim),
+                    nn.ReLU(inplace=True),
+                    nn.Dropout(head_dropout),
+                )
+                self.head_fusion = nn.Sequential(
+                    nn.LayerNorm(feature_dim),
+                    nn.Dropout(head_dropout),
+                    nn.Linear(feature_dim, num_classes),
+                )
+            else:
+                # AIGVDet-style independent dual heads
+                self.head_spatial = nn.Sequential(
+                    nn.LayerNorm(feature_dim),
+                    nn.Dropout(head_dropout),
+                    nn.Linear(feature_dim, num_classes),
+                )
+                self.head_temporal = nn.Sequential(
+                    nn.LayerNorm(feature_dim),
+                    nn.Dropout(head_dropout),
+                    nn.Linear(feature_dim, num_classes),
+                )
         else:
-            # AIGVDet-style independent dual heads
-            self.head_spatial = nn.Sequential(
+            # Spatial-only mode: single classification head
+            self.head = nn.Sequential(
                 nn.LayerNorm(feature_dim),
+                nn.Dropout(head_dropout),
                 nn.Linear(feature_dim, num_classes),
             )
-            self.head_temporal = nn.Sequential(
-                nn.LayerNorm(feature_dim),
-                nn.Linear(feature_dim, num_classes),
-            )
+
+    def _freeze_backbone(self, stages: int) -> None:
+        """Freeze early ResNet stages in spatial_encoder to reduce overfitting.
+        stages=1: freeze conv1+bn1, stages=2: +layer1, stages=3: +layer2.
+        """
+        enc = self.spatial_encoder
+        if stages >= 1:
+            for p in enc.conv1.parameters():
+                p.requires_grad = False
+            for p in enc.bn1.parameters():
+                p.requires_grad = False
+        if stages >= 2:
+            for p in enc.layer1.parameters():
+                p.requires_grad = False
+        if stages >= 3:
+            for p in enc.layer2.parameters():
+                p.requires_grad = False
 
     def forward(
         self,
@@ -551,15 +724,19 @@ class Enhanced_STF_Detector(nn.Module):
             independent:
                 {'logits': [B,1], 'aux_logits': (logit_s, logit_t)}
         """
+        # Spatial-only mode: no temporal branch
+        if not self.use_temporal:
+            f_spatial = self.spatial_encoder(img_spatial)  # [B, C]
+            logit = self.head(f_spatial)  # [B, 1]
+            return {"logits": logit}
+
         if motion_tokens is None:
             if img_motion_1 is None:
                 img_motion_1 = img_spatial
             if img_motion_2 is None:
                 img_motion_2 = img_motion_1
 
-        # 1) Feature extraction
-        # f_spatial: [B, C]
-        f_spatial = self.spatial_encoder(img_spatial)
+        # 1) Motion feature extraction (shared by both modes)
         # f_motion: [B, C]
         f_motion = self.motion_encoder(
             img1=img_motion_1,
@@ -569,16 +746,28 @@ class Enhanced_STF_Detector(nn.Module):
 
         # 2) Fusion mode branch
         if self.fusion_mode == "cross_attention":
-            # Q=f_spatial, K=V=f_motion
-            # f_final: [B, C], attn_weights: [B, 1]
-            f_final, attn_weights = self.st_attention(f_spatial, f_motion, f_motion)
+            # Spatial encoder with feature map for cross-attention
+            # spatial_tokens: [B, H'*W', C], f_spatial: [B, C]
+            spatial_tokens, f_spatial = self.spatial_encoder(
+                img_spatial, return_map=True,
+            )
+
+            # Cross-attention: motion queries spatial feature map
+            # f_attended: [B, C], attn_weights: [B, H'*W']
+            f_attended, attn_weights = self.st_attention(f_motion, spatial_tokens)
+
+            # Fuse motion-attended feature with pooled spatial feature
+            f_final = self.fusion_gate(
+                torch.cat([f_attended, f_spatial], dim=-1),
+            )
             logit = self.head_fusion(f_final)  # [B, 1]
 
-            # Optional alignment regularization for training.
-            fusion_loss = F.mse_loss(
-                F.normalize(f_spatial, dim=-1),
-                F.normalize(f_motion, dim=-1),
-            )
+            # Orthogonality regularization: encourage complementary features
+            cos_sim = (
+                F.normalize(f_spatial, dim=-1) * F.normalize(f_motion, dim=-1)
+            ).sum(dim=-1)
+            fusion_loss = cos_sim.pow(2).mean()
+
             return {
                 "logits": logit,
                 "fusion_loss": fusion_loss,
@@ -586,6 +775,7 @@ class Enhanced_STF_Detector(nn.Module):
             }
 
         # independent mode (baseline / AIGVDet-style)
+        f_spatial = self.spatial_encoder(img_spatial)  # [B, C]
         logit_s = self.head_spatial(f_spatial)   # [B, 1]
         logit_t = self.head_temporal(f_motion)   # [B, 1]
         final_logit = 0.5 * logit_s + 0.5 * logit_t  # [B, 1]

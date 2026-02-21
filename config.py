@@ -9,7 +9,7 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "image_exts": [".jpg", ".jpeg", ".png", ".bmp", ".webp"],  # 统一识别的图像后缀
         "video_exts": [".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg"],  # 统一识别的视频后缀
         "exp_root": "./data/exp",  # 实验输出根目录
-        "exp_name": "thesis_stf",  # 实验名称（同名实验可复用数据，不同实验互不干扰）
+        "exp_name": "cross_attention_rgb_residual_frequency_domain_enhancement_srm",  # 实验名称（同名实验可复用数据，不同实验互不干扰）
         "use_exp_name_paths": True,  # 是否自动把 train/test/threshold 输出路径重定向到 exp_name 目录
     },
     "data": {
@@ -24,13 +24,18 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "fake_class_names": ["1_fake", "fake"],  # 伪造类目录名称候选（按顺序匹配）
     },
     "model": {
-        "fusion_mode": "independent",  # 融合模式：independent（双头独立）或 cross_attention（交叉注意力）
+        "fusion_mode": "cross_attention",  # 融合模式：independent（双头独立）或 cross_attention（交叉注意力）
         "feature_dim": 512,  # 空间/时间分支对齐后的特征维度
-        "use_resnet_imagenet": False,  # 是否使用 ImageNet 预训练的 ResNet50
+        "use_resnet_imagenet": True,  # 是否使用 ImageNet 预训练的 ResNet50
         "hfri_mode": "fft",  # 高频增强模式：fft 或 dct
         "flowformer_repo": "./FlowFormerPlusPlus-main",  # FlowFormer++ 源码目录
         "flowformer_ckpt": "./checkpoints/things.pth",  # FlowFormer++ 权重路径
         "require_flowformer": True,  # 是否强制要求 FlowFormer 加载成功（失败则报错）
+        "head_dropout": 0.3,  # 分类头 Dropout 概率（防止过拟合）
+        "freeze_backbone_stages": 2,  # 冻结 ResNet 早期层数（0=不冻结，1=conv1+bn1，2=+layer1，3=+layer2）
+        "use_hfri": True,  # 是否启用 HFRI 高频残差注入 + FCL 频域卷积层（False=纯 ResNet50 空间特征）
+        "use_temporal": True,  # 是否启用 FlowFormer++ 时序分支（False=仅空间分支，无需光流）
+        "use_srm": True,  # 是否启用 SRM 噪声残差分支（增强跨生成器泛化，False=关闭，与旧模型兼容）
     },
     "train": {
         "save_dir": "./data/exp/thesis_stf",  # 训练输出目录（会被 exp_name 自动重定向）
@@ -43,27 +48,32 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "print_freq": 50,  # 每多少个 step 打印一次训练日志
         "save_every": 5,  # 每多少个 epoch 额外保存一次 epoch_xxx.pth（latest 每轮都保存）
         "amp": False,  # 是否开启混合精度训练（CUDA 下生效）
+        "label_smoothing": 0.1,  # 标签平滑系数（0=不平滑，防止过拟合过于自信的预测）
+        "warmup_epochs": 2,  # 线性 warmup 轮数（避免训练初期学习率过大）
+        "grad_clip_norm": 1.0,  # 梯度裁剪最大范数（0=不裁剪，稳定训练）
+        "focal_gamma": 2.0,  # Focal Loss gamma（0=禁用，用标准BCE；>0 使难样本获得更大权重）
+        "focal_alpha": 0.25,  # Focal Loss alpha（正类平衡因子，0.25 是常用默认值）
         "aux_loss_weight": 0.5,  # independent 模式下辅助损失权重
         "fusion_loss_weight": 0.1,  # cross_attention 模式下融合正则损失权重
-        "early_stop_metric": "auc",  # 早停指标：auc / acc / loss
+        "early_stop_metric": "loss",  # 早停指标：auc / acc / loss
         "early_stop_patience": 5,  # 早停容忍轮数（连续多少轮无提升后停止）
         "early_stop_min_delta": 0.0,  # 早停最小提升阈值（小于该提升不计为改进）
         "cache_val_predictions": True,  # 是否缓存验证集预测结果到 CSV（便于后续找阈值）
         "cache_val_every": 1,  # 每多少个验证 epoch 缓存一次预测
         "cache_val_threshold": 0.5,  # 缓存 CSV 里生成 pred 列时使用的阈值
         "val_video_agg_method": "hybrid_topk_mean",  # 验证集视频级聚合策略：mean / topk_mean / hybrid_topk_mean
-        "val_video_agg_topk_ratio": 0.2,  # top-k 聚合时使用的比例 k_ratio
+        "val_video_agg_topk_ratio": 0.3,  # top-k 聚合时使用的比例 k_ratio
         "val_video_agg_topk_min": 3,  # top-k 聚合的最小 k
         "val_video_agg_topk_max": 32,  # top-k 聚合的最大 k，0 表示不限制
         "val_video_agg_hybrid_alpha": 0.7,  # hybrid_topk_mean 权重：final=alpha*topk_mean+(1-alpha)*mean
         "val_independent_branch_agg": False,  # independent 模式下验证是否启用 RGB/Flow 分支独立聚合再融合
-        "val_rgb_video_agg_method": "topk_mean",  # 验证时 RGB 分支视频聚合策略：mean / topk_mean / hybrid_topk_mean
-        "val_rgb_video_agg_topk_ratio": 0.2,  # 验证时 RGB 分支 top-k 比例
+        "val_rgb_video_agg_method": "hybrid_topk_mean",  # 验证时 RGB 分支视频聚合策略：mean / topk_mean / hybrid_topk_mean
+        "val_rgb_video_agg_topk_ratio": 0.3,  # 验证时 RGB 分支 top-k 比例
         "val_rgb_video_agg_topk_min": 3,  # 验证时 RGB 分支 top-k 最小 k
         "val_rgb_video_agg_topk_max": 32,  # 验证时 RGB 分支 top-k 最大 k，0 表示不限制
         "val_rgb_video_agg_hybrid_alpha": 0.7,  # 验证时 RGB 分支 hybrid 权重
-        "val_flow_video_agg_method": "topk_mean",  # 验证时 Flow 分支视频聚合策略：mean / topk_mean / hybrid_topk_mean
-        "val_flow_video_agg_topk_ratio": 0.2,  # 验证时 Flow 分支 top-k 比例
+        "val_flow_video_agg_method": "hybrid_topk_mean",  # 验证时 Flow 分支视频聚合策略：mean / topk_mean / hybrid_topk_mean
+        "val_flow_video_agg_topk_ratio": 0.3,  # 验证时 Flow 分支 top-k 比例
         "val_flow_video_agg_topk_min": 3,  # 验证时 Flow 分支 top-k 最小 k
         "val_flow_video_agg_topk_max": 32,  # 验证时 Flow 分支 top-k 最大 k，0 表示不限制
         "val_flow_video_agg_hybrid_alpha": 0.7,  # 验证时 Flow 分支 hybrid 权重
@@ -100,19 +110,19 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "hfri_mode": "",  # 测试时可选覆盖 HFRI 模式，空字符串表示沿用 checkpoint 配置
         "flowformer_repo": "",  # 测试时可选覆盖 FlowFormer 源码目录，空字符串表示沿用 checkpoint 配置
         "flowformer_ckpt": "",  # 测试时可选覆盖 FlowFormer 权重路径，空字符串表示沿用 checkpoint 配置
-        "video_agg_method": "topk_mean",  # 视频级概率聚合策略：mean / topk_mean / hybrid_topk_mean
-        "video_agg_topk_ratio": 0.1,  # top-k 聚合时使用的比例 k_ratio
+        "video_agg_method": "hybrid_topk_mean",  # 视频级概率聚合策略：mean / topk_mean / hybrid_topk_mean
+        "video_agg_topk_ratio": 0.3,  # top-k 聚合时使用的比例 k_ratio
         "video_agg_topk_min": 3,  # top-k 聚合的最小 k
         "video_agg_topk_max": 32,  # top-k 聚合的最大 k，0 表示不限制
         "video_agg_hybrid_alpha": 0.7,  # hybrid_topk_mean 权重：final=alpha*topk_mean+(1-alpha)*mean
         "independent_branch_agg": False,  # independent 模式下测试是否启用 RGB/Flow 分支独立聚合再融合
-        "rgb_video_agg_method": "topk_mean",  # 测试时 RGB 分支视频聚合策略：mean / topk_mean / hybrid_topk_mean
-        "rgb_video_agg_topk_ratio": 0.1,  # 测试时 RGB 分支 top-k 比例
+        "rgb_video_agg_method": "hybrid_topk_mean",  # 测试时 RGB 分支视频聚合策略：mean / topk_mean / hybrid_topk_mean
+        "rgb_video_agg_topk_ratio": 0.3,  # 测试时 RGB 分支 top-k 比例
         "rgb_video_agg_topk_min": 3,  # 测试时 RGB 分支 top-k 最小 k
         "rgb_video_agg_topk_max": 32,  # 测试时 RGB 分支 top-k 最大 k，0 表示不限制
         "rgb_video_agg_hybrid_alpha": 0.7,  # 测试时 RGB 分支 hybrid 权重
-        "flow_video_agg_method": "topk_mean",  # 测试时 Flow 分支视频聚合策略：mean / topk_mean / hybrid_topk_mean
-        "flow_video_agg_topk_ratio": 0.1,  # 测试时 Flow 分支 top-k 比例
+        "flow_video_agg_method": "hybrid_topk_mean",  # 测试时 Flow 分支视频聚合策略：mean / topk_mean / hybrid_topk_mean
+        "flow_video_agg_topk_ratio": 0.3,  # 测试时 Flow 分支 top-k 比例
         "flow_video_agg_topk_min": 3,  # 测试时 Flow 分支 top-k 最小 k
         "flow_video_agg_topk_max": 32,  # 测试时 Flow 分支 top-k 最大 k，0 表示不限制
         "flow_video_agg_hybrid_alpha": 0.7,  # 测试时 Flow 分支 hybrid 权重

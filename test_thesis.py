@@ -333,6 +333,11 @@ def infer_model_args(test_args: argparse.Namespace, ckpt_cfg: Dict) -> Dict:
         test_args.flowformer_ckpt if test_args.flowformer_ckpt else ckpt_cfg.get("flowformer_ckpt", model_cfg["flowformer_ckpt"])
     )
 
+    head_dropout = float(ckpt_cfg.get("head_dropout", model_cfg.get("head_dropout", 0.3)))
+    use_srm = bool(ckpt_cfg.get("use_srm", model_cfg.get("use_srm", False)))
+    use_hfri = bool(ckpt_cfg.get("use_hfri", model_cfg.get("use_hfri", True)))
+    use_temporal = bool(ckpt_cfg.get("use_temporal", model_cfg.get("use_temporal", True)))
+
     return {
         "fusion_mode": fusion_mode,
         "feature_dim": feature_dim,
@@ -340,6 +345,10 @@ def infer_model_args(test_args: argparse.Namespace, ckpt_cfg: Dict) -> Dict:
         "require_flowformer": require_flowformer,
         "flowformer_repo": flowformer_repo,
         "flowformer_ckpt": flowformer_ckpt,
+        "head_dropout": head_dropout,
+        "use_srm": use_srm,
+        "use_hfri": use_hfri,
+        "use_temporal": use_temporal,
     }
 
 
@@ -877,7 +886,10 @@ def infer_one_video(
                 p1_list.append(str(p1))
 
             x1_batch = torch.stack(x1_list, dim=0).to(device, non_blocking=True)  # [B,3,H,W]
-            if motion_token_cache is not None:
+            if not getattr(model, "use_temporal", True):
+                # Spatial-only mode: no motion tokens needed
+                outputs = model(x1_batch)
+            elif motion_token_cache is not None:
                 if video_tokens is None or video_tokens.ndim != 2 or video_tokens.size(0) <= 0:
                     token_dim = int(getattr(motion_token_cache, "token_dim", 256))
                     motion_tokens_batch = torch.zeros((len(idx_list), token_dim), dtype=torch.float32, device=device)
@@ -989,9 +1001,14 @@ def main() -> None:
         fusion_mode=model_args["fusion_mode"],
         use_resnet_imagenet=False,
         hfri_mode=model_args["hfri_mode"],
-        require_flowformer=model_args["require_flowformer"],
+        require_flowformer=(model_args["require_flowformer"] and model_args["use_temporal"]),
         flowformer_repo=model_args["flowformer_repo"],
         flowformer_ckpt=model_args["flowformer_ckpt"],
+        head_dropout=model_args["head_dropout"],
+        freeze_backbone_stages=0,
+        use_srm=model_args["use_srm"],
+        use_hfri=model_args["use_hfri"],
+        use_temporal=model_args["use_temporal"],
     ).to(device)
 
     load_msg = model.load_state_dict(state_dict, strict=True)
@@ -1001,6 +1018,7 @@ def main() -> None:
     )
     print(
         f"[Model] fusion_mode={model_args['fusion_mode']} feature_dim={model_args['feature_dim']} "
+        f"use_temporal={model_args['use_temporal']} use_hfri={model_args['use_hfri']} use_srm={model_args['use_srm']} "
         f"hfri_mode={model_args['hfri_mode']} rgb_compress_quality={int(args.rgb_compress_quality)} "
         f"video_agg={args.video_agg_method}(ratio={float(args.video_agg_topk_ratio):.3f},"
         f"min={int(args.video_agg_topk_min)},max={int(args.video_agg_topk_max)},"
@@ -1019,7 +1037,7 @@ def main() -> None:
         )
 
     motion_token_cache: Optional[MotionTokenCacheManager] = None
-    if bool(args.use_motion_token_cache):
+    if bool(args.use_motion_token_cache) and model_args["use_temporal"]:
         motion_token_cache = MotionTokenCacheManager(
             motion_encoder=model.motion_encoder,
             device=device,
@@ -1091,6 +1109,8 @@ def main() -> None:
     frame_labels_all: List[float] = []
     video_probs_all: List[float] = []
     video_labels_all: List[float] = []
+    # Per-group collection: {group_model: {"probs": [...], "labels": [...]}}
+    group_video_data: Dict[str, Dict[str, List[float]]] = {}
     num_frames_written = 0
     num_videos_written = 0
 
@@ -1320,6 +1340,10 @@ def main() -> None:
             }
             video_probs_all.append(float(video_prob))
             video_labels_all.append(float(label))
+            if group_model not in group_video_data:
+                group_video_data[group_model] = {"probs": [], "labels": []}
+            group_video_data[group_model]["probs"].append(float(video_prob))
+            group_video_data[group_model]["labels"].append(float(label))
 
             # Save immediately after each processed video.
             frame_writer.writerows(frame_batch_rows)
@@ -1337,26 +1361,130 @@ def main() -> None:
         # Flush final group cache after all its videos are done.
         flush_pending_group_cache(current_group_for_cache)
 
-    frame_pred = [1.0 if p >= args.threshold else 0.0 for p in frame_probs_all]
-    frame_acc = float(np.mean([int(p == y) for p, y in zip(frame_pred, frame_labels_all)])) if frame_labels_all else 0.0
-    frame_auc, frame_ap = compute_auc_ap(frame_labels_all, frame_probs_all)
+    # ------------------------------------------------------------------
+    #  Helper: compute detailed binary classification metrics
+    # ------------------------------------------------------------------
+    def _detailed_metrics(
+        labels_list: List[float], probs_list: List[float], threshold: float,
+    ) -> Dict[str, float]:
+        if not labels_list:
+            return {k: float("nan") for k in [
+                "auc", "ap", "acc", "precision", "recall", "f1",
+                "fake_recall", "real_recall", "balanced_acc", "youden_j",
+                "tp", "tn", "fp", "fn", "num_fake", "num_real", "num_total",
+            ]}
+        y = np.asarray(labels_list, dtype=np.float32)
+        p = np.asarray(probs_list, dtype=np.float32)
+        pred = (p >= threshold).astype(np.int32)
+        yi = y.astype(np.int32)
 
-    video_pred = [1.0 if p >= args.threshold else 0.0 for p in video_probs_all]
-    video_acc = float(np.mean([int(p == y) for p, y in zip(video_pred, video_labels_all)])) if video_labels_all else 0.0
-    video_auc, video_ap = compute_auc_ap(video_labels_all, video_probs_all)
+        tp = int(np.sum((pred == 1) & (yi == 1)))
+        tn = int(np.sum((pred == 0) & (yi == 0)))
+        fp = int(np.sum((pred == 1) & (yi == 0)))
+        fn = int(np.sum((pred == 0) & (yi == 1)))
 
+        n_pos = tp + fn  # actual fakes
+        n_neg = tn + fp  # actual reals
+        n_all = n_pos + n_neg
+
+        acc = (tp + tn) / max(n_all, 1)
+        precision = tp / max(tp + fp, 1)
+        recall = tp / max(tp + fn, 1)          # = fake_recall
+        f1 = 2 * precision * recall / max(precision + recall, 1e-12) if (precision + recall) > 0 else 0.0
+        real_recall = tn / max(tn + fp, 1)     # = specificity
+        balanced_acc = 0.5 * (recall + real_recall)
+        youden_j = recall + real_recall - 1.0
+
+        auc_val, ap_val = compute_auc_ap(labels_list, probs_list)
+
+        return {
+            "auc": safe_float(auc_val),
+            "ap": safe_float(ap_val),
+            "acc": float(acc),
+            "precision": float(precision),
+            "recall": float(recall),
+            "f1": float(f1),
+            "fake_recall": float(recall),
+            "real_recall": float(real_recall),
+            "balanced_acc": float(balanced_acc),
+            "youden_j": float(youden_j),
+            "tp": float(tp),
+            "tn": float(tn),
+            "fp": float(fp),
+            "fn": float(fn),
+            "num_fake": float(n_pos),
+            "num_real": float(n_neg),
+            "num_total": float(n_all),
+        }
+
+    # ------------------------------------------------------------------
+    #  Overall metrics (video-level)
+    # ------------------------------------------------------------------
+    overall_video = _detailed_metrics(video_labels_all, video_probs_all, args.threshold)
+    overall_frame = _detailed_metrics(frame_labels_all, frame_probs_all, args.threshold)
+
+    # ------------------------------------------------------------------
+    #  Per-group metrics (video-level)
+    # ------------------------------------------------------------------
+    group_metrics_list: List[Dict] = []
+    for gname in group_video_data:
+        gd = group_video_data[gname]
+        gm = _detailed_metrics(gd["labels"], gd["probs"], args.threshold)
+        gm["group_model"] = gname
+        group_metrics_list.append(gm)
+
+    # ------------------------------------------------------------------
+    #  Save per-group metrics CSV
+    # ------------------------------------------------------------------
+    group_csv = out_csv.with_name(out_csv.stem.replace("frame_predictions", "metrics_per_group") + ".csv")
+    if "frame_predictions" not in out_csv.stem:
+        group_csv = out_csv.with_name("test_metrics_per_group.csv")
+    group_csv.parent.mkdir(parents=True, exist_ok=True)
+
+    group_csv_fields = [
+        "group_model", "num_total", "num_fake", "num_real",
+        "auc", "ap", "acc", "precision", "recall", "f1",
+        "fake_recall", "real_recall", "balanced_acc", "youden_j",
+        "tp", "tn", "fp", "fn",
+    ]
+    with open(group_csv, "w", newline="", encoding="utf-8") as gf:
+        gw = csv.DictWriter(gf, fieldnames=group_csv_fields, extrasaction="ignore")
+        gw.writeheader()
+        for gm in group_metrics_list:
+            row_out = {}
+            for k in group_csv_fields:
+                v = gm.get(k, "")
+                if isinstance(v, float) and k not in ("tp", "tn", "fp", "fn", "num_total", "num_fake", "num_real"):
+                    row_out[k] = f"{v:.6f}" if np.isfinite(v) else ""
+                elif isinstance(v, float):
+                    row_out[k] = str(int(v))
+                else:
+                    row_out[k] = str(v)
+            gw.writerow(row_out)
+        # Write overall as last row
+        overall_row = dict(overall_video)
+        overall_row["group_model"] = "OVERALL"
+        row_out = {}
+        for k in group_csv_fields:
+            v = overall_row.get(k, "")
+            if isinstance(v, float) and k not in ("tp", "tn", "fp", "fn", "num_total", "num_fake", "num_real"):
+                row_out[k] = f"{v:.6f}" if np.isfinite(v) else ""
+            elif isinstance(v, float):
+                row_out[k] = str(int(v))
+            else:
+                row_out[k] = str(v)
+        gw.writerow(row_out)
+
+    # ------------------------------------------------------------------
+    #  Save full summary JSON
+    # ------------------------------------------------------------------
     metrics = {
-        "frame_acc": frame_acc,
-        "frame_auc": frame_auc,
-        "frame_ap": frame_ap,
-        "video_acc": video_acc,
-        "video_auc": video_auc,
-        "video_ap": video_ap,
+        "threshold": args.threshold,
+        "overall_video": overall_video,
+        "overall_frame": overall_frame,
+        "per_group": {gm["group_model"]: gm for gm in group_metrics_list},
         "num_frames": int(num_frames_written),
         "num_videos": int(num_videos_written),
-        "num_fake": int(n_fake),
-        "num_real": int(n_real),
-        "threshold": args.threshold,
         "motion_multi_offsets": [int(x) for x in normalize_motion_offsets(args.motion_stride, args.motion_multi_offsets)],
         "video_agg_method": str(args.video_agg_method),
         "video_agg_topk_ratio": float(args.video_agg_topk_ratio),
@@ -1364,36 +1492,56 @@ def main() -> None:
         "video_agg_topk_max": int(args.video_agg_topk_max),
         "video_agg_hybrid_alpha": float(args.video_agg_hybrid_alpha),
         "independent_branch_agg": bool(args.independent_branch_agg),
-        "rgb_video_agg_method": str(args.rgb_video_agg_method),
-        "rgb_video_agg_topk_ratio": float(args.rgb_video_agg_topk_ratio),
-        "rgb_video_agg_topk_min": int(args.rgb_video_agg_topk_min),
-        "rgb_video_agg_topk_max": int(args.rgb_video_agg_topk_max),
-        "rgb_video_agg_hybrid_alpha": float(args.rgb_video_agg_hybrid_alpha),
-        "flow_video_agg_method": str(args.flow_video_agg_method),
-        "flow_video_agg_topk_ratio": float(args.flow_video_agg_topk_ratio),
-        "flow_video_agg_topk_min": int(args.flow_video_agg_topk_min),
-        "flow_video_agg_topk_max": int(args.flow_video_agg_topk_max),
-        "flow_video_agg_hybrid_alpha": float(args.flow_video_agg_hybrid_alpha),
-        "branch_fuse_weight_rgb": float(args.branch_fuse_weight_rgb),
-        "branch_fuse_weight_flow": float(args.branch_fuse_weight_flow),
         "rgb_compress_quality": int(args.rgb_compress_quality),
         "cache_hit_mem": int(cache_hit_mem),
         "cache_hit_disk": int(cache_hit_disk),
         "cache_miss": int(cache_miss),
-        "cache_group_flush_count": int(cache_group_flush_count),
-        "cache_group_flush_videos": int(cache_group_flush_videos),
-        "real_repeat_total": int(real_repeat_total),
-        "real_repeat_cache_hit": int(real_repeat_cache_hit),
         "skipped_empty": int(skipped_empty),
         "use_motion_token_cache": bool(args.use_motion_token_cache),
-        "motion_token_cache_bucket": str(motion_token_cache.cache_bucket) if motion_token_cache is not None else "",
-        "motion_token_cache_hit_mem": int(motion_token_cache.hit_mem) if motion_token_cache is not None else 0,
-        "motion_token_cache_hit_disk": int(motion_token_cache.hit_disk) if motion_token_cache is not None else 0,
-        "motion_token_cache_miss_compute": int(motion_token_cache.miss_compute) if motion_token_cache is not None else 0,
     }
-    print(json.dumps(metrics, ensure_ascii=False, indent=2))
-    print(f"[Saved] frame-level csv: {out_csv}")
-    print(f"[Saved] video-level csv: {video_csv}")
+
+    metrics_json = out_csv.with_name(out_csv.stem.replace("frame_predictions", "metrics_summary") + ".json")
+    if "frame_predictions" not in out_csv.stem:
+        metrics_json = out_csv.with_name("test_metrics_summary.json")
+    metrics_json.parent.mkdir(parents=True, exist_ok=True)
+    with open(metrics_json, "w", encoding="utf-8") as mf:
+        json.dump(metrics, mf, ensure_ascii=False, indent=2)
+
+    # ------------------------------------------------------------------
+    #  Console output: per-group table + overall
+    # ------------------------------------------------------------------
+    def _fmt(v: float, decimals: int = 4) -> str:
+        if isinstance(v, float) and np.isfinite(v):
+            return f"{v:.{decimals}f}"
+        return "N/A"
+
+    header = f"{'Group':<28s} {'#Total':>6s} {'#Fake':>6s} {'#Real':>6s} {'AUC':>7s} {'ACC':>7s} {'F1':>7s} {'Prec':>7s} {'FakeRec':>7s} {'RealRec':>7s}"
+    sep = "-" * len(header)
+    print(f"\n{'='*len(header)}")
+    print(f"  Test Results  (threshold={args.threshold:.4f})")
+    print(f"{'='*len(header)}")
+    print(header)
+    print(sep)
+    for gm in group_metrics_list:
+        print(
+            f"{gm['group_model']:<28s} "
+            f"{int(gm['num_total']):>6d} {int(gm['num_fake']):>6d} {int(gm['num_real']):>6d} "
+            f"{_fmt(gm['auc']):>7s} {_fmt(gm['acc']):>7s} {_fmt(gm['f1']):>7s} "
+            f"{_fmt(gm['precision']):>7s} {_fmt(gm['fake_recall']):>7s} {_fmt(gm['real_recall']):>7s}"
+        )
+    print(sep)
+    ov = overall_video
+    print(
+        f"{'OVERALL':<28s} "
+        f"{int(ov['num_total']):>6d} {int(ov['num_fake']):>6d} {int(ov['num_real']):>6d} "
+        f"{_fmt(ov['auc']):>7s} {_fmt(ov['acc']):>7s} {_fmt(ov['f1']):>7s} "
+        f"{_fmt(ov['precision']):>7s} {_fmt(ov['fake_recall']):>7s} {_fmt(ov['real_recall']):>7s}"
+    )
+    print(f"{'='*len(header)}")
+    print(f"\n[Saved] frame-level csv : {out_csv}")
+    print(f"[Saved] video-level csv : {video_csv}")
+    print(f"[Saved] per-group csv   : {group_csv}")
+    print(f"[Saved] metrics summary : {metrics_json}")
 
 
 if __name__ == "__main__":

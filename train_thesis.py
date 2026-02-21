@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
-from PIL import Image
+from PIL import Image, ImageFilter
 from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms import functional as TF
@@ -133,6 +133,51 @@ class PairTransform:
         self.train = train
         self.resize_size = int(round(self.image_size * 1.14))
 
+    @staticmethod
+    def _jpeg_augment(img: Image.Image, quality: int) -> Image.Image:
+        with io.BytesIO() as buf:
+            img.save(buf, format="JPEG", quality=max(1, min(100, quality)))
+            buf.seek(0)
+            return Image.open(buf).convert("RGB").copy()
+
+    @staticmethod
+    def _freq_augment(tensor: torch.Tensor, drop_ratio: float = 0.1) -> torch.Tensor:
+        """Frequency domain augmentation: randomly mask frequency bands.
+
+        This prevents the model from relying on generator-specific frequency
+        fingerprints, forcing it to learn more general forgery features.
+
+        Args:
+            tensor: image tensor [C,H,W] in [0,1] range
+            drop_ratio: fraction of frequency components to mask
+        """
+        c, h, w = tensor.shape
+        fft = torch.fft.rfft2(tensor, dim=(-2, -1))
+        freq_h, freq_w = fft.shape[-2], fft.shape[-1]
+        num_freq = freq_h * freq_w
+        num_drop = max(1, int(num_freq * drop_ratio))
+        drop_indices = torch.randperm(num_freq)[:num_drop]
+        drop_h = drop_indices // freq_w
+        drop_w = drop_indices % freq_w
+        mask = torch.ones_like(fft)
+        mask[:, drop_h, drop_w] = 0.0
+        fft_masked = fft * mask
+        result = torch.fft.irfft2(fft_masked, s=(h, w), dim=(-2, -1))
+        return result.clamp(0.0, 1.0)
+
+    @staticmethod
+    def _random_downscale(img: Image.Image, min_scale: float = 0.5) -> Image.Image:
+        """Random downscale then upscale back: simulates different quality levels.
+
+        Breaks generator-specific high-frequency artifacts by resampling.
+        """
+        w, h = img.size
+        scale = random.uniform(min_scale, 0.9)
+        new_w, new_h = max(16, int(w * scale)), max(16, int(h * scale))
+        img_down = img.resize((new_w, new_h), Image.BILINEAR)
+        img_up = img_down.resize((w, h), Image.BILINEAR)
+        return img_up
+
     def __call__(self, img1: Image.Image, img2: Image.Image) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.train:
             img1 = TF.resize(img1, [self.resize_size, self.resize_size], interpolation=InterpolationMode.BILINEAR)
@@ -151,12 +196,52 @@ class PairTransform:
             if random.random() < 0.5:
                 img1 = TF.hflip(img1)
                 img2 = TF.hflip(img2)
+
+            # Color jitter (same params for both to maintain temporal consistency)
+            if random.random() < 0.5:
+                brightness = random.uniform(0.8, 1.2)
+                contrast = random.uniform(0.8, 1.2)
+                saturation = random.uniform(0.8, 1.2)
+                hue = random.uniform(-0.05, 0.05)
+                img1 = TF.adjust_brightness(img1, brightness)
+                img1 = TF.adjust_contrast(img1, contrast)
+                img1 = TF.adjust_saturation(img1, saturation)
+                img1 = TF.adjust_hue(img1, hue)
+                img2 = TF.adjust_brightness(img2, brightness)
+                img2 = TF.adjust_contrast(img2, contrast)
+                img2 = TF.adjust_saturation(img2, saturation)
+                img2 = TF.adjust_hue(img2, hue)
+
+            # Random downscale-upscale (destroy generator-specific high-freq artifacts)
+            if random.random() < 0.3:
+                scale = random.uniform(0.5, 0.9)
+                img1 = self._random_downscale(img1, min_scale=scale)
+                img2 = self._random_downscale(img2, min_scale=scale)
+
+            # JPEG compression augmentation (simulate social media degradation)
+            if random.random() < 0.3:
+                quality = random.randint(65, 95)
+                img1 = self._jpeg_augment(img1, quality)
+                img2 = self._jpeg_augment(img2, quality)
+
+            # Gaussian blur
+            if random.random() < 0.2:
+                radius = random.uniform(0.5, 1.5)
+                img1 = img1.filter(ImageFilter.GaussianBlur(radius=radius))
+                img2 = img2.filter(ImageFilter.GaussianBlur(radius=radius))
         else:
             img1 = TF.resize(img1, [self.image_size, self.image_size], interpolation=InterpolationMode.BILINEAR)
             img2 = TF.resize(img2, [self.image_size, self.image_size], interpolation=InterpolationMode.BILINEAR)
 
         x1 = TF.to_tensor(img1)  # [3,H,W], range [0,1]
         x2 = TF.to_tensor(img2)  # [3,H,W], range [0,1]
+
+        # Frequency domain augmentation (applied on tensor to use FFT)
+        if self.train and random.random() < 0.3:
+            drop_ratio = random.uniform(0.05, 0.15)
+            x1 = self._freq_augment(x1, drop_ratio=drop_ratio)
+            x2 = self._freq_augment(x2, drop_ratio=drop_ratio)
+
         return x1, x2
 
 
@@ -563,6 +648,43 @@ def build_optimizer(model: nn.Module, lr: float, weight_decay: float) -> torch.o
     return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
 
 
+def _smooth_labels(targets: torch.Tensor, smoothing: float) -> torch.Tensor:
+    """Apply label smoothing to binary labels: y' = y*(1-s) + 0.5*s."""
+    if smoothing <= 0.0:
+        return targets
+    return targets * (1.0 - smoothing) + 0.5 * smoothing
+
+
+def focal_bce_with_logits(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    gamma: float = 2.0,
+    alpha: float = 0.25,
+) -> torch.Tensor:
+    """Focal Loss for binary classification (with logits input).
+
+    Focal Loss down-weights easy examples so the model focuses on hard ones,
+    which helps when certain generators are easy to detect (moonvalley)
+    while others are hard (hotshot, sora).
+
+    Args:
+        logits: raw model output before sigmoid, shape [B,1]
+        targets: ground truth labels, shape [B,1]
+        gamma: focusing parameter, higher = more focus on hard examples
+        alpha: balance factor for positive class
+    """
+    bce = nn.functional.binary_cross_entropy_with_logits(
+        logits, targets, reduction="none",
+    )
+    probs = torch.sigmoid(logits)
+    p_t = probs * targets + (1.0 - probs) * (1.0 - targets)
+    focal_weight = (1.0 - p_t) ** gamma
+
+    alpha_t = alpha * targets + (1.0 - alpha) * (1.0 - targets)
+    loss = alpha_t * focal_weight * bce
+    return loss.mean()
+
+
 def compute_losses(
     outputs: Dict,
     targets: torch.Tensor,
@@ -570,14 +692,27 @@ def compute_losses(
     fusion_mode: str,
     aux_loss_weight: float,
     fusion_loss_weight: float,
+    label_smoothing: float = 0.0,
+    focal_gamma: float = 0.0,
+    focal_alpha: float = 0.25,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     # targets: [B,1]
+    smooth_targets = _smooth_labels(targets, label_smoothing)
     logits = outputs["logits"]  # [B,1]
-    main_loss = criterion(logits, targets)
+    if focal_gamma > 0:
+        main_loss = focal_bce_with_logits(logits, smooth_targets, gamma=focal_gamma, alpha=focal_alpha)
+    else:
+        main_loss = criterion(logits, smooth_targets)
 
     if fusion_mode == "independent":
         logit_s, logit_t = outputs["aux_logits"]  # [B,1], [B,1]
-        aux_loss = 0.5 * (criterion(logit_s, targets) + criterion(logit_t, targets))
+        if focal_gamma > 0:
+            aux_loss = 0.5 * (
+                focal_bce_with_logits(logit_s, smooth_targets, gamma=focal_gamma, alpha=focal_alpha)
+                + focal_bce_with_logits(logit_t, smooth_targets, gamma=focal_gamma, alpha=focal_alpha)
+            )
+        else:
+            aux_loss = 0.5 * (criterion(logit_s, smooth_targets) + criterion(logit_t, smooth_targets))
         total_loss = main_loss + aux_loss_weight * aux_loss
         return total_loss, {
             "main_loss": float(main_loss.detach().cpu()),
@@ -995,8 +1130,63 @@ def parse_args() -> argparse.Namespace:
         parser.set_defaults(require_flowformer=model_cfg["require_flowformer"])
 
     parser.add_argument("--hfri_mode", type=str, default=model_cfg["hfri_mode"], choices=["fft", "dct"])
+    parser.add_argument("--head_dropout", type=float, default=float(model_cfg.get("head_dropout", 0.3)))
+    parser.add_argument(
+        "--freeze_backbone_stages",
+        type=int,
+        default=int(model_cfg.get("freeze_backbone_stages", 2)),
+        help="Freeze early ResNet stages (0=none, 1=conv1+bn1, 2=+layer1, 3=+layer2).",
+    )
+    if bool_action is not None:
+        parser.add_argument("--use_srm", action=bool_action, default=bool(model_cfg.get("use_srm", False)),
+                            help="Enable SRM noise-residual branch for cross-generator robustness.")
+        parser.add_argument("--use_hfri", action=bool_action, default=bool(model_cfg.get("use_hfri", True)),
+                            help="Enable HFRI + FCL frequency-domain enhancement.")
+        parser.add_argument("--use_temporal", action=bool_action, default=bool(model_cfg.get("use_temporal", True)),
+                            help="Enable FlowFormer++ temporal branch.")
+    else:
+        parser.add_argument("--use_srm", dest="use_srm", action="store_true",
+                            help="Enable SRM noise-residual branch.")
+        parser.add_argument("--no-use_srm", dest="use_srm", action="store_false")
+        parser.set_defaults(use_srm=bool(model_cfg.get("use_srm", False)))
+        parser.add_argument("--use_hfri", dest="use_hfri", action="store_true")
+        parser.add_argument("--no-use_hfri", dest="use_hfri", action="store_false")
+        parser.set_defaults(use_hfri=bool(model_cfg.get("use_hfri", True)))
+        parser.add_argument("--use_temporal", dest="use_temporal", action="store_true")
+        parser.add_argument("--no-use_temporal", dest="use_temporal", action="store_false")
+        parser.set_defaults(use_temporal=bool(model_cfg.get("use_temporal", True)))
     parser.add_argument("--aux_loss_weight", type=float, default=train_cfg["aux_loss_weight"])
     parser.add_argument("--fusion_loss_weight", type=float, default=train_cfg["fusion_loss_weight"])
+    parser.add_argument(
+        "--label_smoothing",
+        type=float,
+        default=float(train_cfg.get("label_smoothing", 0.1)),
+        help="Label smoothing factor (0=disabled).",
+    )
+    parser.add_argument(
+        "--focal_gamma",
+        type=float,
+        default=float(train_cfg.get("focal_gamma", 2.0)),
+        help="Focal Loss gamma (0=disabled, use standard BCE). Higher values focus more on hard samples.",
+    )
+    parser.add_argument(
+        "--focal_alpha",
+        type=float,
+        default=float(train_cfg.get("focal_alpha", 0.25)),
+        help="Focal Loss alpha (balance factor for positive class).",
+    )
+    parser.add_argument(
+        "--warmup_epochs",
+        type=int,
+        default=int(train_cfg.get("warmup_epochs", 2)),
+        help="Linear warmup epochs before cosine annealing.",
+    )
+    parser.add_argument(
+        "--grad_clip_norm",
+        type=float,
+        default=float(train_cfg.get("grad_clip_norm", 1.0)),
+        help="Max gradient norm for clipping (0=disabled).",
+    )
     parser.add_argument(
         "--early_stop_metric",
         type=str,
@@ -1241,7 +1431,7 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_amp = bool(args.amp and device.type == "cuda")
-    use_motion_token_cache = bool(args.use_motion_token_cache)
+    use_motion_token_cache = bool(args.use_motion_token_cache and args.use_temporal)
     motion_offsets = normalize_motion_offsets(args.motion_stride, args.motion_multi_offsets)
     force_det_pairs = bool(use_motion_token_cache and args.motion_token_cache_force_deterministic_pairs)
     use_motion_cache_for_val = bool(use_motion_token_cache and args.motion_token_cache_for_val)
@@ -1258,7 +1448,7 @@ def main() -> None:
         motion_stride=args.motion_stride,
         max_frames_per_video=args.max_frames_per_video,
         deterministic_motion_pair=force_det_pairs,
-        load_motion_images=(not use_motion_token_cache),
+        load_motion_images=(args.use_temporal and not use_motion_token_cache),
     )
     val_dataset: Optional[DeepfakePairDataset] = None
     if args.val_root:
@@ -1269,7 +1459,7 @@ def main() -> None:
             motion_stride=args.motion_stride,
             max_frames_per_video=args.max_frames_per_video,
             deterministic_motion_pair=use_motion_cache_for_val,
-            load_motion_images=(not use_motion_cache_for_val),
+            load_motion_images=(args.use_temporal and not use_motion_cache_for_val),
         )
 
     train_loader = DataLoader(
@@ -1300,11 +1490,21 @@ def main() -> None:
         hfri_mode=args.hfri_mode,
         flowformer_repo=args.flowformer_repo,
         flowformer_ckpt=args.flowformer_ckpt,
-        require_flowformer=args.require_flowformer,
+        require_flowformer=(args.require_flowformer and args.use_temporal),
+        head_dropout=args.head_dropout,
+        freeze_backbone_stages=args.freeze_backbone_stages,
+        use_srm=args.use_srm,
+        use_hfri=args.use_hfri,
+        use_temporal=args.use_temporal,
     ).to(device)
     print(
         f"[Train] fusion_mode={args.fusion_mode} feature_dim={args.feature_dim} "
-        f"hfri_mode={args.hfri_mode} flowformer_ckpt={args.flowformer_ckpt}"
+        f"use_temporal={args.use_temporal} use_hfri={args.use_hfri} use_srm={args.use_srm} "
+        f"hfri_mode={args.hfri_mode} flowformer_ckpt={args.flowformer_ckpt} "
+        f"head_dropout={args.head_dropout} freeze_stages={args.freeze_backbone_stages} "
+        f"label_smoothing={args.label_smoothing} warmup={args.warmup_epochs} "
+        f"grad_clip={args.grad_clip_norm} "
+        f"focal_gamma={args.focal_gamma} focal_alpha={args.focal_alpha}"
     )
 
     motion_token_cache: Optional[MotionTokenCacheManager] = None
@@ -1335,7 +1535,20 @@ def main() -> None:
 
     criterion = nn.BCEWithLogitsLoss()
     optimizer = build_optimizer(model, lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, args.epochs))
+
+    warmup_epochs = max(0, int(args.warmup_epochs))
+    if warmup_epochs > 0:
+        warmup_sched = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs,
+        )
+        cosine_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max(1, args.epochs - warmup_epochs),
+        )
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer, schedulers=[warmup_sched, cosine_sched], milestones=[warmup_epochs],
+        )
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, args.epochs))
     if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
         scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     else:
@@ -1451,9 +1664,15 @@ def main() -> None:
                     fusion_mode=args.fusion_mode,
                     aux_loss_weight=args.aux_loss_weight,
                     fusion_loss_weight=args.fusion_loss_weight,
+                    label_smoothing=args.label_smoothing,
+                    focal_gamma=args.focal_gamma,
+                    focal_alpha=args.focal_alpha,
                 )
 
             scaler.scale(loss).backward()
+            if args.grad_clip_norm > 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.grad_clip_norm)
             scaler.step(optimizer)
             scaler.update()
 
