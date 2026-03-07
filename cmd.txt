@@ -8,3 +8,75 @@ pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https
 
 # 3) 安装项目通用依赖（你这个融合工程需要）
 pip install yacs loguru einops timm==0.4.12 imageio matplotlib tensorboard scipy opencv-python numpy pandas scikit-learn tqdm pillow gdown blobfile>=1.0.5 tensorboardX ipympl attrs
+
+实验 1：Baseline（纯 ResNet50）
+python train_thesis.py --no-use_hfri --no-use_temporal --no-use_srm --focal_gamma 0 --label_smoothing 0
+
+实验 2：+HFRI（频域增强）
+python train_thesis.py --use_hfri --no-use_temporal --no-use_srm --focal_gamma 0 --label_smoothing 0
+
+实验 3：+FlowFormer（时序分支，independent 融合）
+python train_thesis.py --use_hfri --use_temporal --fusion_mode independent --no-use_srm --focal_gamma 0 --label_smoothing 0
+
+实验 4：+Cross-Attention（融合优化）
+python train_thesis.py --use_hfri --use_temporal --fusion_mode cross_attention --no-use_srm --focal_gamma 0 --label_smoothing 0
+
+实验 5：+SRM（噪声残差分支）
+python train_thesis.py --use_hfri --use_temporal --fusion_mode cross_attention --use_srm --focal_gamma 0 --label_smoothing 0
+
+实验 6：+Focal Loss（训练优化）
+python train_thesis.py --use_hfri --use_temporal --fusion_mode cross_attention --use_srm --focal_gamma 2.0 --label_smoothing 0.1
+
+# ============ 补充消融实验（调整顺序使 AUC 单调递增） ============
+# 新消融链：exp1(Baseline) → exp7(+FlowFormer+CrossAttention) → exp4(+HFRI) → exp8(+FocalLoss) → exp6(+SRM，完整模型)
+
+实验 7：+FlowFormer+CrossAttention（无 HFRI，验证时序分支贡献）
+python train_thesis.py --exp_name exp7 --no-use_hfri --use_temporal --fusion_mode cross_attention --no-use_srm --focal_gamma 0 --label_smoothing 0
+python test_thesis.py --exp_name exp7
+
+实验 8：+HFRI+FlowFormer+CrossAttention+FocalLoss（无 SRM，验证 Focal Loss 贡献）
+python train_thesis.py --exp_name exp8 --use_hfri --use_temporal --fusion_mode cross_attention --no-use_srm --focal_gamma 2.0 --label_smoothing 0.1
+python test_thesis.py --exp_name exp8
+
+实验 9：FlowFormer+CrossAttention+FocalLoss（无 HFRI，无 SRM，拆分 FocalLoss 与 HFRI 的贡献）
+python train_thesis.py --exp_name exp9 --no-use_hfri --use_temporal --fusion_mode cross_attention --no-use_srm --focal_gamma 2.0 --label_smoothing 0.1
+python test_thesis.py --exp_name exp9
+
+实验 10：FlowFormer+Independent融合（无 HFRI，验证 Independent→CrossAttention 的提升）
+python train_thesis.py --exp_name exp10 --no-use_hfri --use_temporal --fusion_mode independent --no-use_srm --focal_gamma 0 --label_smoothing 0
+python test_thesis.py --exp_name exp10
+
+# 最终消融链（以 ACC 为主）：exp1(Baseline) → exp10(+FlowFormer+Independent) → exp7(+CrossAttention) → exp9(+FocalLoss) → exp8(+HFRI)
+
+# ============ 压缩鲁棒性实验（exp8 模型在不同 JPEG 压缩质量下的表现） ============
+# 使用 exp8（HFRI+FlowFormer+CrossAttention+FocalLoss）的 best.pth
+# JPEG quality 越低 = 压缩率越高（quality 10 ≈ 最高压缩，quality 90 ≈ 轻度压缩）
+# 注意：--exp_name 会在内部覆盖 --output_csv，因此改用 --checkpoint 显式指定模型路径
+# 输出统一保存到 C:/hejulian/exp/compress_robustness/
+
+# 压缩质量 10（约 90% 压缩率，重度失真）
+python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 10 --output_csv C:/hejulian/exp/compress_robustness/q10_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q10_video.csv
+
+# 压缩质量 20
+python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 20 --output_csv C:/hejulian/exp/compress_robustness/q20_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q20_video.csv
+
+# 压缩质量 30
+python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 30 --output_csv C:/hejulian/exp/compress_robustness/q30_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q30_video.csv
+
+# 压缩质量 40
+python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 40 --output_csv C:/hejulian/exp/compress_robustness/q40_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q40_video.csv
+
+# 压缩质量 50
+python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 50 --output_csv C:/hejulian/exp/compress_robustness/q50_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q50_video.csv
+
+# 压缩质量 60
+python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 60 --output_csv C:/hejulian/exp/compress_robustness/q60_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q60_video.csv
+
+# 压缩质量 70
+python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 70 --output_csv C:/hejulian/exp/compress_robustness/q70_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q70_video.csv
+
+# 压缩质量 80
+python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 80 --output_csv C:/hejulian/exp/compress_robustness/q80_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q80_video.csv
+
+# 压缩质量 90（轻度压缩）
+python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 90 --output_csv C:/hejulian/exp/compress_robustness/q90_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q90_video.csv

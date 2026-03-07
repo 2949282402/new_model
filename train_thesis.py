@@ -704,6 +704,14 @@ def compute_losses(
     else:
         main_loss = criterion(logits, smooth_targets)
 
+    # Spatial-only mode: no aux_logits / fusion_loss produced
+    if "aux_logits" not in outputs and "fusion_loss" not in outputs:
+        return main_loss, {
+            "main_loss": float(main_loss.detach().cpu()),
+            "aux_loss": 0.0,
+            "fusion_reg": 0.0,
+        }
+
     if fusion_mode == "independent":
         logit_s, logit_t = outputs["aux_logits"]  # [B,1], [B,1]
         if focal_gamma > 0:
@@ -1065,6 +1073,8 @@ def parse_args() -> argparse.Namespace:
     train_cfg = cfg["train"]
 
     parser = argparse.ArgumentParser("Train Enhanced_STF_Detector")
+    parser.add_argument("--exp_name", type=str, default=common_cfg.get("exp_name", ""),
+                        help="Experiment name. Overrides save_dir to ./data/exp/<exp_name>.")
     parser.add_argument("--train_root", type=str, default=data_cfg["train_root"], help="Train root dir with class folders.")
     parser.add_argument("--val_root", type=str, default=data_cfg["val_root"], help="Validation root dir.")
     parser.add_argument("--save_dir", type=str, default=train_cfg["save_dir"])
@@ -1427,6 +1437,14 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    # --exp_name overrides save_dir to <exp_root>/<exp_name>
+    if args.exp_name:
+        from config import get_default_config as _get_cfg
+        _cfg = _get_cfg()
+        exp_root = Path(_cfg["common"].get("exp_root", "./data/exp"))
+        args.save_dir = str((exp_root / args.exp_name).as_posix())
+
     seed_everything(args.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

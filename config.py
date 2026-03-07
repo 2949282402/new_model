@@ -8,7 +8,7 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "seed": 42,  # 全局随机种子（控制可复现）
         "image_exts": [".jpg", ".jpeg", ".png", ".bmp", ".webp"],  # 统一识别的图像后缀
         "video_exts": [".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg"],  # 统一识别的视频后缀
-        "exp_root": "./data/exp",  # 实验输出根目录
+        "exp_root": "C:/hejulian/exp",  # 实验输出根目录
         "exp_name": "cross_attention_rgb_residual_frequency_domain_enhancement_srm",  # 实验名称（同名实验可复用数据，不同实验互不干扰）
         "use_exp_name_paths": True,  # 是否自动把 train/test/threshold 输出路径重定向到 exp_name 目录
     },
@@ -40,7 +40,7 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
     "train": {
         "save_dir": "./data/exp/thesis_stf",  # 训练输出目录（会被 exp_name 自动重定向）
         "resume": "",  # 断点续训 checkpoint 路径，空字符串表示不续训
-        "epochs": 20,  # 最大训练轮数
+        "epochs": 200,  # 最大训练轮数
         "batch_size": 8,  # 训练批大小
         "num_workers": 4,  # DataLoader 读取进程数
         "lr": 1e-4,  # 学习率
@@ -104,7 +104,7 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "cache_dir": "./data/exp/thesis_stf/test_cache",  # 测试缓存根目录（会被 exp_name 自动重定向）
         "refresh_cache": False,  # 是否忽略历史缓存并强制重算
         "rgb_compress_quality": 0,  # 测试时 RGB 压缩质量，0 表示不压缩，1~100 表示 JPEG 质量
-        "rgb_compress_quality_choices": [0, 100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30],  # 可选压缩质量
+        "rgb_compress_quality_choices": [0, 100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30, 25, 20, 15, 10],  # 可选压缩质量
         "fusion_mode": "",  # 测试时可选覆盖融合模式，空字符串表示沿用 checkpoint 配置
         "feature_dim": 0,  # 测试时可选覆盖特征维度，0 表示沿用 checkpoint 配置
         "hfri_mode": "",  # 测试时可选覆盖 HFRI 模式，空字符串表示沿用 checkpoint 配置

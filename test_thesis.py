@@ -78,7 +78,11 @@ def parse_args() -> argparse.Namespace:
     data_cfg = cfg["data"]
     test_cfg = cfg["test"]
 
+    common_cfg = cfg["common"]
+
     parser = argparse.ArgumentParser("Test Enhanced_STF_Detector")
+    parser.add_argument("--exp_name", type=str, default=common_cfg.get("exp_name", ""),
+                        help="Experiment name. Overrides checkpoint/output paths to ./data/exp/<exp_name>/.")
     parser.add_argument("--data_root", type=str, default=data_cfg["test_root"], help="Test root dir with class folders.")
     parser.add_argument("--checkpoint", type=str, default=test_cfg["checkpoint"], help="Checkpoint path.")
     parser.add_argument("--output_csv", type=str, default=test_cfg["output_csv"])
@@ -989,6 +993,17 @@ def infer_one_video(
 
 def main() -> None:
     args = parse_args()
+
+    # --exp_name overrides checkpoint/output paths to <exp_root>/<exp_name>/
+    if args.exp_name:
+        from config import get_default_config as _get_cfg
+        _cfg = _get_cfg()
+        _exp_root = Path(_cfg["common"].get("exp_root", "./data/exp"))
+        exp_dir = _exp_root / args.exp_name
+        args.checkpoint = str((exp_dir / "best.pth").as_posix())
+        args.output_csv = str((exp_dir / "test_frame_predictions.csv").as_posix())
+        args.cache_dir = str((exp_dir / "test_cache").as_posix())
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     ckpt = _torch_load_compat(args.checkpoint, map_location="cpu", weights_only=False)
