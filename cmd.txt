@@ -54,10 +54,10 @@ python test_thesis.py --exp_name exp10
 # 注意：--exp_name 会在内部覆盖 --output_csv，因此改用 --checkpoint 显式指定模型路径
 # 输出统一保存到 C:/hejulian/exp/compress_robustness/
 
-# 压缩质量 10（约 90% 压缩率，重度失真）
+# 压缩质量 10（约 90% 压缩率，重度失真） 完成
 python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 10 --output_csv C:/hejulian/exp/compress_robustness/q10_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q10_video.csv
 
-# 压缩质量 20
+# 压缩质量 20 完成
 python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 20 --output_csv C:/hejulian/exp/compress_robustness/q20_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q20_video.csv
 
 # 压缩质量 30
@@ -66,13 +66,13 @@ python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_
 # 压缩质量 40
 python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 40 --output_csv C:/hejulian/exp/compress_robustness/q40_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q40_video.csv
 
-# 压缩质量 50
+# 压缩质量 50 （doing done）
 python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 50 --output_csv C:/hejulian/exp/compress_robustness/q50_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q50_video.csv
 
 # 压缩质量 60
 python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 60 --output_csv C:/hejulian/exp/compress_robustness/q60_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q60_video.csv
 
-# 压缩质量 70
+# 压缩质量 70（doing））
 python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 70 --output_csv C:/hejulian/exp/compress_robustness/q70_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q70_video.csv
 
 # 压缩质量 80
