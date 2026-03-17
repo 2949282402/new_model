@@ -72,11 +72,66 @@ python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_
 # 压缩质量 60
 python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 60 --output_csv C:/hejulian/exp/compress_robustness/q60_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q60_video.csv
 
-# 压缩质量 70（doing））
+# 压缩质量 70（doing）done）
 python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 70 --output_csv C:/hejulian/exp/compress_robustness/q70_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q70_video.csv
 
 # 压缩质量 80
 python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 80 --output_csv C:/hejulian/exp/compress_robustness/q80_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q80_video.csv
 
-# 压缩质量 90（轻度压缩）
+# 压缩质量 90（轻度压缩 doing）
 python test_thesis.py --checkpoint C:/hejulian/exp/exp8/best.pth --rgb_compress_quality 90 --output_csv C:/hejulian/exp/compress_robustness/q90_frame.csv --video_output_csv C:/hejulian/exp/compress_robustness/q90_video.csv
+
+# ============ Baseline 对比实验 ============
+# 三个 baseline 均使用作者公开的预训练权重，在同一测试集 ./data/test 上评估
+# 输出统一保存到 C:/hejulian/exp/
+
+# UnivFD (CVPR 2023) — CLIP ViT-L/14 + 线性分类头, 阈值 0.5
+# 权重: UniversalFakeDetect/pretrained_weights/fc_weights.pth (已在仓库中)
+python test_univfd.py --threshold 0.5
+
+# FreqNet (AAAI 2024) — 频域感知 ResNet, 阈值 0.5
+# 权重: FreqNet-DeepfakeDetection-main/4-classes-freqnet-v2.pth (已在目录中)
+python test_freqnet.py --threshold 0.5
+
+# AIDE (ICLR 2025) — DCT + SRM + OpenCLIP ConvNeXt-XXL 混合专家, 阈值 0.5
+# 权重: 从 https://drive.google.com/drive/folders/1qx76UFvDpgCxaPLBCmsA2WY-SSzeJrd4 下载 progan_train.pth
+#       放到 C:\hejulian\progan_train.pth
+# 注意: 模型较大, 建议 batch_size=8 防止 OOM
+python test_aide.py --threshold 0.5 --batch_size 64
+
+python test_aide.py --max_frames 16 --batch_size 1 --num_workers 2 --fp16
+
+# ============ 视频级 Baseline 对比实验 ============
+# 以下 baseline 利用时序信息（多帧联合判断），非逐帧独立检测
+
+# D3 (ICCV 2025) — Training-Free, 二阶时序特征, 无需训练权重
+# 编码器从 HuggingFace 自动下载 (首次需网络)
+# 默认 XCLIP-16 + L2 距离, 输出 C:/hejulian/exp/d3_baseline/
+python test_d3.py --encoder XCLIP-16 --loss l2 --threshold 0.5
+
+
+
+# AIGVDet (PRCV 2024) — RGB + 光流双分支 ResNet50, 融合权重各 0.5
+# 光流由 RAFT 实时计算, 不存盘 (只保存最终检测结果)
+# 权重: C:\hejulian\aigvdet_original.pth (RGB) + C:\hejulian\aigvdet_optical.pth (光流) + C:\hejulian\raft-things.pth (RAFT)
+# 注意: 每帧都要计算光流, 速度较慢
+python test_aigvdet.py --threshold 0.5
+python test_aigvdet.py --threshold 0.5 --max_frames 16 --raft_iters 10 --fp16
+
+计算推理速度
+python benchmark_models.py 
+
+画图
+python plot_compress_robustness.py 
+
+
+方法	总参数量	可训练参数	推理速度
+Ours (Enhanced-STF)	48.13M	31.75M	7.49 ms (cached) / 30.94 ms (full), 32.3 FPS
+UnivFD (CVPR 2023)	427.62M	427.62M	8.45 ms, 118.4 FPS
+FreqNet (AAAI 2024)	1.85M	1.85M	4.54 ms, 220.4 FPS
+AIDE (ICLR 2025)	897.83M	54.43M	30.86 ms, 32.4 img/s
+D3 (ICCV 2025)	121.25M	0 (training-free)	1.58 ms/frame, 633.5 FPS
+AIGVDet (PRCV 2024)	52.28M	47.02M	~100.42 ms, ~10.0 FPS
+
+attention热力图
+python visualize_attention.py --video_dir E:\hejulian\code\data\test_fake\rgb\T2V_sora_mp4\cat-on-bed

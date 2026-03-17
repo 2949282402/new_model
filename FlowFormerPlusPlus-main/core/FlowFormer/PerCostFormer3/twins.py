@@ -22,7 +22,11 @@ from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.layers import Mlp, DropPath, to_2tuple, trunc_normal_
 from timm.models.registry import register_model
 from timm.models.vision_transformer import Attention
-from timm.models.helpers import build_model_with_cfg, overlay_external_default_cfg
+try:
+    from timm.models.helpers import build_model_with_cfg, overlay_external_default_cfg
+except ImportError:
+    from timm.models._builder import build_model_with_cfg
+    overlay_external_default_cfg = None
 from .attention import MultiHeadAttention, LinearPositionEmbeddingSine
 from ...utils.utils import coords_grid, bilinear_sampler, upflow8
 

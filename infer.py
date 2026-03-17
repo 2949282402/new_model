@@ -7,6 +7,7 @@
     python infer.py video.mp4
     python infer.py ./frames/video_001/
     python infer.py video.mp4 --checkpoint best.pth --threshold 0.5
+    python infer.py video.mp4 --save_attn                  # 同时生成注意力热力图
 
 默认模型权重 (best.pth) 与本脚本在同一目录下。
 """
@@ -38,10 +39,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threshold", type=float, default=0.5,
                         help="判定阈值, >= threshold 判为 AI 生成 (默认: 0.5)")
     parser.add_argument("--image_size", type=int, default=224, help="输入图像尺寸 (默认: 224)")
-    parser.add_argument("--batch_size", type=int, default=8, help="推理批大小 (默认: 8)")
-    parser.add_argument("--every_n", type=int, default=1, help="每隔 N 帧抽取一帧 (默认: 1)")
+    parser.add_argument("--batch_size", type=int, default=32, help="推理批大小 (默认: 8)")
+    parser.add_argument("--every_n", type=int, default=1, help="基准帧步长 N (0=全部, 默认: 1)")
     parser.add_argument("--max_frames", type=int, default=0, help="最多使用帧数, 0=不限制 (默认: 0)")
     parser.add_argument("--device", type=str, default="", help="推理设备 (默认: 自动选择)")
+    # 注意力热力图
+    parser.add_argument("--save_attn", action="store_true", default=False,
+                        help="同时生成注意力热力图 (仅 cross_attention 模式有效)")
+    parser.add_argument("--attn_top_k", type=int, default=5,
+                        help="绘制概率最高的连续 K 帧 (默认: 5)")
+    parser.add_argument("--attn_alpha", type=float, default=0.5,
+                        help="热力图叠加透明度 (默认: 0.1")
+    parser.add_argument("--attn_output", type=str, default="",
+                        help="热力图输出目录 (默认: 与输入视频同目录下的 <video_name>_attn/)")
     return parser.parse_args()
 
 
@@ -142,7 +152,6 @@ def load_model(checkpoint_path: str, device: torch.device):
     state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
     ckpt_cfg = ckpt.get("config", {}) if isinstance(ckpt, dict) else {}
 
-    # 从 checkpoint 配置推断模型参数
     defaults = {
         "fusion_mode": "cross_attention",
         "feature_dim": 512,
@@ -168,7 +177,6 @@ def load_model(checkpoint_path: str, device: torch.device):
             val = str(val)
         model_args[key] = val
 
-    # flowformer 路径: 如果 ckpt 中是相对路径, 转为基于脚本目录的绝对路径
     for path_key in ("flowformer_repo", "flowformer_ckpt"):
         p = Path(model_args[path_key])
         if not p.is_absolute():
@@ -209,8 +217,9 @@ def infer_video(
     image_size: int = 224,
     batch_size: int = 8,
     max_frames: int = 0,
-) -> Tuple[float, List[float]]:
-    """对一个视频(帧目录)进行推理, 返回 (视频概率, 帧概率列表)。"""
+    sample_stride: int = 1,
+) -> Tuple[float, List[float], List[Path]]:
+    """对一个视频(帧目录)进行推理, 返回 (视频概率, 帧概率列表, 使用的帧路径列表)。"""
     frames = list_image_files(frame_dir)
     if max_frames > 0:
         frames = frames[:max_frames]
@@ -222,24 +231,26 @@ def infer_video(
     use_temporal = model_args.get("use_temporal", True)
     motion_offsets = [1, 2, 4]
     frame_probs: List[float] = []
+    used_frames: List[Path] = []
+    stride = max(1, int(sample_stride))
+    base_indices = list(range(0, n, stride))
 
     with torch.no_grad():
-        for start in range(0, n, batch_size):
-            idx_list = list(range(start, min(start + batch_size, n)))
+        for start in range(0, len(base_indices), batch_size):
+            idx_list = base_indices[start:start + batch_size]
 
-            # 加载空间帧
             x1_list = []
             for i in idx_list:
                 with Image.open(frames[i]) as img:
                     img = img.convert("RGB")
                 x1, _ = preprocess_pair(img, img, image_size)
                 x1_list.append(x1)
+                used_frames.append(frames[i])
             x1_batch = torch.stack(x1_list, dim=0).to(device, non_blocking=True)
 
             if not use_temporal:
                 outputs = model(x1_batch)
             else:
-                # 多偏移时序集成
                 token_sum = None
                 for off in motion_offsets:
                     x2_list = []
@@ -258,14 +269,171 @@ def infer_video(
             probs = torch.sigmoid(outputs["logits"]).squeeze(1).detach().cpu().numpy().tolist()
             frame_probs.extend([float(p) for p in probs])
 
-            # 进度
-            done = min(start + batch_size, n)
-            print(f"\r[推理] {done}/{n} 帧", end="", flush=True)
+            done = min(start + batch_size, len(base_indices))
+            print(f"\r[推理] {done}/{len(base_indices)} 帧", end="", flush=True)
 
-    print()  # 换行
-
+    print()
     video_prob = aggregate_hybrid_topk_mean(frame_probs)
-    return video_prob, frame_probs
+    return video_prob, frame_probs, used_frames
+
+
+# --------------- 注意力热力图 ---------------
+
+def _find_top_consecutive(probs: List[float], top_k: int) -> List[int]:
+    """找到概率最高帧为中心的 top_k 个连续帧索引。"""
+    n = len(probs)
+    if n <= top_k:
+        return list(range(n))
+    peak_idx = int(np.argmax(probs))
+    half = top_k // 2
+    start = max(0, peak_idx - half)
+    end = start + top_k
+    if end > n:
+        end = n
+        start = max(0, end - top_k)
+    return list(range(start, end))
+
+
+def _extract_attention_single(
+    model: torch.nn.Module,
+    img_spatial: torch.Tensor,
+    img_motion_2: torch.Tensor,
+) -> Tuple[np.ndarray, float]:
+    """提取单帧的注意力权重, 返回 (attn_map [H,W], prob)。"""
+    import torch.nn.functional as F
+    with torch.no_grad():
+        outputs = model(img_spatial, img_spatial, img_motion_2)
+    prob = torch.sigmoid(outputs["logits"]).item()
+    attn_weights = outputs["attn_weights"]  # [1, N]
+    N = attn_weights.shape[1]
+    h = w = int(N ** 0.5)
+    if h * w != N:
+        for hh in range(1, N + 1):
+            if N % hh == 0:
+                ww = N // hh
+                if abs(hh - ww) < abs(h - w):
+                    h, w = hh, ww
+    attn_map = attn_weights[0].reshape(h, w).unsqueeze(0).unsqueeze(0)
+    attn_map = F.interpolate(attn_map, size=(img_spatial.shape[2], img_spatial.shape[3]),
+                             mode="bilinear", align_corners=False)[0, 0]
+    a_min, a_max = attn_map.min(), attn_map.max()
+    if a_max - a_min > 1e-8:
+        attn_map = (attn_map - a_min) / (a_max - a_min)
+    else:
+        attn_map = torch.zeros_like(attn_map)
+    return attn_map.cpu().numpy(), prob
+
+
+def _make_overlay(original_np: np.ndarray, attn_map: np.ndarray, alpha: float) -> np.ndarray:
+    import matplotlib.cm as cm
+    colormap = cm.jet(attn_map)[:, :, :3]
+    overlay = (1 - alpha) * (original_np.astype(np.float32) / 255.0) + alpha * colormap
+    return (np.clip(overlay, 0, 1) * 255).astype(np.uint8)
+
+
+def generate_attention_maps(
+    model: torch.nn.Module,
+    model_args: Dict,
+    device: torch.device,
+    frames: List[Path],
+    frame_probs: List[float],
+    output_dir: Path,
+    image_size: int = 224,
+    top_k: int = 5,
+    alpha: float = 0.5,
+) -> Optional[Path]:
+    """
+    生成注意力热力图三行合并大图, 返回保存路径。
+    仅在 fusion_mode == 'cross_attention' 时有效。
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib import font_manager
+
+    for fname in ["SimSun", "SimHei", "Microsoft YaHei", "STSong"]:
+        if any(fname in f.name for f in font_manager.fontManager.ttflist):
+            plt.rcParams["font.family"] = fname
+            break
+    plt.rcParams["axes.unicode_minus"] = False
+
+    if model_args.get("fusion_mode", "") != "cross_attention":
+        print("[热力图] 跳过: 模型不是 cross_attention 模式，无注意力权重。")
+        return None
+
+    if not frames:
+        return None
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    n = len(frames)
+
+    # 选出概率最高的 top_k 个连续帧
+    top_indices = _find_top_consecutive(frame_probs, top_k)
+    k = len(top_indices)
+
+    print(f"[热力图] 提取 {k} 帧注意力权重 (帧索引: {top_indices})...")
+
+    originals, attn_maps, overlays, drawn_probs, orig_indices = [], [], [], [], []
+    for ti in top_indices:
+        frame_path = frames[ti]
+        motion_j = min(n - 1, ti + 1)
+
+        img_pil = Image.open(str(frame_path)).convert("RGB")
+        original_np = np.array(img_pil.resize((image_size, image_size), Image.BILINEAR))
+        img_t = TF.to_tensor(TF.resize(img_pil, [image_size, image_size]))
+        img_spatial = img_t.unsqueeze(0).to(device)
+
+        img_m_pil = Image.open(str(frames[motion_j])).convert("RGB")
+        img_m_t = TF.to_tensor(TF.resize(img_m_pil, [image_size, image_size]))
+        img_motion_2 = img_m_t.unsqueeze(0).to(device)
+
+        attn_map, prob = _extract_attention_single(model, img_spatial, img_motion_2)
+        overlay = _make_overlay(original_np, attn_map, alpha)
+
+        originals.append(original_np)
+        attn_maps.append(attn_map)
+        overlays.append(overlay)
+        drawn_probs.append(prob)
+        orig_indices.append(ti)
+
+    # 三行合并大图
+    fig, axes = plt.subplots(3, k, figsize=(4 * k, 12))
+    if k == 1:
+        axes = axes.reshape(3, 1)
+
+    for i in range(k):
+        axes[0, i].imshow(originals[i])
+        axes[0, i].set_title(f"帧 #{orig_indices[i]}", fontsize=11)
+        axes[0, i].axis("off")
+
+        im = axes[1, i].imshow(attn_maps[i], cmap="jet", vmin=0, vmax=1)
+        axes[1, i].axis("off")
+
+        axes[2, i].imshow(overlays[i])
+        axes[2, i].set_title(f"P={drawn_probs[i]:.3f}", fontsize=11)
+        axes[2, i].axis("off")
+
+    # 行标签
+    for r, label in enumerate(["原始帧", "注意力图", "叠加图"]):
+        axes[r, 0].set_ylabel(label, fontsize=13, rotation=90, labelpad=10)
+        axes[r, 0].yaxis.set_visible(True)
+        axes[r, 0].tick_params(left=False, labelleft=False)
+
+    # colorbar 加在第 2 行最右侧
+    fig.subplots_adjust(right=0.91)
+    cbar_ax = fig.add_axes([0.92, 0.37, 0.012, 0.27])
+    fig.colorbar(im, cax=cbar_ax)
+
+    fig.tight_layout(rect=[0, 0, 0.91, 1.0])
+
+    out_svg = output_dir / "combined_3rows.svg"
+    out_png = output_dir / "combined_3rows.png"
+    fig.savefig(str(out_svg), bbox_inches="tight")
+    fig.savefig(str(out_png), dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"[热力图] 已保存: {out_svg}")
+    return out_svg
 
 
 # --------------- 主函数 ---------------
@@ -278,21 +446,18 @@ def main():
         print(f"[错误] 路径不存在: {video_path}")
         sys.exit(1)
 
-    # 选择设备
     if args.device:
         device = torch.device(args.device)
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[设备] {device}")
 
-    # 判断输入是视频文件还是帧目录
     tmp_dir = None
     if video_path.is_file():
         if video_path.suffix.lower() in VIDEO_EXTS:
-            frame_dir = extract_frames_from_video(video_path, every_n=args.every_n)
+            frame_dir = extract_frames_from_video(video_path, every_n=1)
             tmp_dir = frame_dir
         elif video_path.suffix.lower() in IMAGE_EXTS:
-            # 单张图片 → 用其所在目录
             frame_dir = video_path.parent
             print(f"[提示] 输入为单张图片, 使用所在目录: {frame_dir}")
         else:
@@ -304,14 +469,13 @@ def main():
         print(f"[错误] 无法识别的路径类型: {video_path}")
         sys.exit(1)
 
-    # 加载模型
     if not Path(args.checkpoint).exists():
         print(f"[错误] 模型权重不存在: {args.checkpoint}")
         sys.exit(1)
     model, model_args = load_model(args.checkpoint, device)
 
-    # 推理
-    video_prob, frame_probs = infer_video(
+    sample_stride = max(1, int(args.every_n)) if args.every_n and args.every_n > 0 else 1
+    video_prob, frame_probs, used_frames = infer_video(
         model=model,
         model_args=model_args,
         device=device,
@@ -319,22 +483,45 @@ def main():
         image_size=args.image_size,
         batch_size=args.batch_size,
         max_frames=args.max_frames,
+        sample_stride=sample_stride,
     )
 
-    # 清理临时目录
+    # 注意力热力图
+    attn_svg_path = None
+    if args.save_attn:
+        frames = used_frames
+        if args.attn_output:
+            attn_out_dir = Path(args.attn_output)
+        else:
+            video_stem = video_path.stem if video_path.is_file() else video_path.name
+            attn_out_dir = (video_path.parent if video_path.is_file() else video_path.parent) / f"{video_stem}_attn"
+        attn_svg_path = generate_attention_maps(
+            model=model,
+            model_args=model_args,
+            device=device,
+            frames=frames,
+            frame_probs=frame_probs,
+            output_dir=attn_out_dir,
+            image_size=args.image_size,
+            top_k=args.attn_top_k,
+            alpha=args.attn_alpha,
+        )
+
     if tmp_dir is not None:
         import shutil
         shutil.rmtree(str(tmp_dir), ignore_errors=True)
 
-    # 输出结果
     label = "AI 生成" if video_prob >= args.threshold else "真实"
     print()
     print("=" * 50)
     print(f"  视频路径:   {video_path}")
     print(f"  分析帧数:   {len(frame_probs)}")
+    print(f"  基准帧步长: {sample_stride}")
     print(f"  AI生成概率: {video_prob:.4f} ({video_prob * 100:.2f}%)")
     print(f"  判定阈值:   {args.threshold}")
     print(f"  检测结果:   {label}")
+    if attn_svg_path:
+        print(f"  热力图路径: {attn_svg_path}")
     print("=" * 50)
 
 

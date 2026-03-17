@@ -24,10 +24,16 @@ from functools import partial
 
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.layers import Mlp, DropPath, to_2tuple, trunc_normal_
-from timm.models.fx_features import register_notrace_module
+try:
+    from timm.models.fx_features import register_notrace_module
+except ImportError:
+    def register_notrace_module(cls): return cls
 from timm.models.registry import register_model
 from timm.models.vision_transformer import Attention
-from timm.models.helpers import build_model_with_cfg
+try:
+    from timm.models.helpers import build_model_with_cfg
+except ImportError:
+    from timm.models._builder import build_model_with_cfg
 
 def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False, cossin=False):
     """

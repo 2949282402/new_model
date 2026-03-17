@@ -15,7 +15,11 @@ from typing import Optional, Tuple
 from .twins import Size_, PosConv
 from .cnn import TwinsSelfAttentionLayer, TwinsCrossAttentionLayer, BasicEncoder
 
-from timm.models.layers import Mlp, DropPath, activations, to_2tuple, trunc_normal_
+from timm.models.layers import Mlp, DropPath, to_2tuple, trunc_normal_
+try:
+    from timm.models.layers import activations
+except ImportError:
+    activations = None
 
 class PatchEmbed(nn.Module):
     def __init__(self, patch_size=16, in_chans=1, embed_dim=64, pe='linear', cfg=None):
