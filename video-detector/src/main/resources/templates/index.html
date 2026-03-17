@@ -139,9 +139,11 @@
 
             // 先用 blob URL 尝试本地播放
             uploadVideo.onerror = null;
+            uploadVideo.loop = true;
             uploadVideo.src = URL.createObjectURL(file);
             uploadVideo.style.display = 'block';
             uploadPlaceholder.style.display = 'none';
+            uploadVideo.play().catch(() => {});
 
             // 若浏览器无法解码，则请求后端 FFmpeg 转码预览
             uploadVideo.onerror = async () => {
@@ -154,6 +156,7 @@
                     const data = await res.json();
                     if (data.success) {
                         uploadVideo.src = data.previewUrl;
+                        uploadVideo.play().catch(() => {});
                         alertBox.className = 'alert'; // 隐藏提示
                     } else {
                         showAlert('预览转码失败：' + data.message, 'error');
