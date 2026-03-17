@@ -3,377 +3,160 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>妫€娴嬬粨鏋?- AI鐢熸垚瑙嗛妫€娴嬬郴缁?</title>
-        <link rel="stylesheet" href="/static/css/result.css">
+    <title>检测结果 - AI生成视频检测系统</title>
+    <link rel="stylesheet" href="/static/css/result.css">
 </head>
 <body>
     <div class="container">
         <div style="display: flex; gap: 10px; margin-bottom: 20px;">
-            <button type="button" class="btn" id="backBtn">杩斿洖涓婁竴椤?</button>
-            <a href="/" class="btn">杩斿洖涓婁紶椤甸潰</a>
+            <button type="button" class="btn" id="backBtn">返回上一页</button>
+            <a href="/" class="btn">返回上传页面</a>
         </div>
 
         <div class="card fade-in">
-            <h1>妫€娴嬫姤鍛?</h1>
+            <h1>检测报告</h1>
 
             <div class="result-header">
-                <div class="result-title" id="resultTitle">鍒嗘瀽涓?..</div>
-                <div style="color: #666; font-size: 14px;">瑙嗛鏂囦欢锛?span id="videoName" style="font-weight: 600;"></span></div>
+                <div class="result-title" id="resultTitle">分析中...</div>
+                <div style="color: #666; font-size: 14px;">
+                    视频文件：<span id="videoName" style="font-weight: 600;"></span>
+                </div>
             </div>
 
             <div class="info-section">
                 <div style="margin-bottom: 16px; padding: 12px; background: #f7f7f7; border-radius: 6px; border: 1px solid #ddd;">
-                    <h4 style="margin: 0 0 8px 0; color: #333; font-size: 14px;">鎻愮ず</h4>
+                    <h4 style="margin: 0 0 8px 0; color: #333; font-size: 14px;">提示</h4>
                     <p style="margin: 0; color: #666; line-height: 1.5; font-size: 13px;">
-                        鏈娴嬬粨鏋滀粎渚涘弬鑰冿紝涓嶆瀯鎴愪换浣曞舰寮忕殑淇濊瘉鎴栨壙璇恒€侫I妫€娴嬫妧鏈彲鑳藉瓨鍦ㄨ宸紝寤鸿鎮ㄧ粨鍚堝叾浠栨柟娉曞拰涓撲笟鍒ゆ柇杩涜缁煎悎璇勪及銆傚浜庡洜渚濊禆鏈娴嬬粨鏋滆€屽仛鍑虹殑浠讳綍鍐崇瓥锛屾垜浠笉鎵挎媴浠讳綍璐ｄ换銆傝璋ㄦ厧杈ㄥ埆瑙嗛鍐呭锛岀悊鎬х湅寰呮娴嬬粨璁恒€?                    </p>
+                        本检测结果仅供参考，不构成任何形式的保证或承诺。AI检测技术可能存在误差，
+                        建议结合其他方法和专业判断进行综合评估。对于因依赖本检测结果而做出的任何决策，
+                        我们不承担责任。请理性看待检测结论。
+                    </p>
                 </div>
 
                 <div class="info-item">
-                    <div class="info-label">AI鐢熸垚姒傜巼:</div>
+                    <div class="info-label">AI生成概率:</div>
                     <div class="info-value">
                         <div class="probability-bar">
                             <div class="probability-fill" id="probabilityBar" style="width: 0%;">0%</div>
                         </div>
                         <div class="probability-text" id="probabilityText">0%</div>
                         <div style="margin-top: 6px; color: #777; font-size: 12px;">
-                            姒傜巼鏄犲皠璇存槑锛?-0.1鏄犲皠涓?%-50%锛?.1-1鏄犲皠涓?0%-100%銆?                        </div>
+                            概率映射说明：0-0.1 映射为 0%-50%，0.1-1 映射为 50%-100%
+                        </div>
                     </div>
                 </div>
+
                 <div class="info-item">
-                    <div class="info-label">鍒ゅ畾闃堝€?</div>
-                    <div class="info-value">50%(鍘熷0.1)</div>
+                    <div class="info-label">判定阈值</div>
+                    <div class="info-value">50%（原始 0.1）</div>
                 </div>
+
                 <div class="info-item">
-                    <div class="info-label">妫€娴嬬粨鏋?</div>
+                    <div class="info-label">检测结果</div>
                     <div class="info-value">
-                        <span class="badge" id="resultBadge">绛夊緟缁撴灉</span>
+                        <span class="badge" id="resultBadge">等待结果</span>
                     </div>
                 </div>
+
                 <div class="info-item">
-                    <div class="info-label">鍒嗘瀽甯ф暟:</div>
+                    <div class="info-label">分析帧数:</div>
                     <div class="info-value" id="frameCount">-</div>
                 </div>
+
                 <div class="info-item">
-                    <div class="info-label">妫€娴嬫椂闂?</div>
+                    <div class="info-label">检测时间</div>
                     <div class="info-value" id="detectTime">-</div>
                 </div>
+
                 <div class="info-item">
-                    <div class="info-label">鎺掗槦鑰楁椂:</div>
+                    <div class="info-label">排队耗时:</div>
                     <div class="info-value" id="queueDuration">-</div>
                 </div>
+
                 <div class="info-item">
-                    <div class="info-label">妫€娴嬭€楁椂:</div>
+                    <div class="info-label">检测耗时:</div>
                     <div class="info-value" id="detectDuration">-</div>
                 </div>
             </div>
 
             <div class="attention-section" id="attentionSection" style="display: none;">
-                <div class="details-title">Attention鐑姏鍥?</div>
+                <div class="details-title">Attention热力图</div>
                 <div class="attention-content">
-                    <img id="attentionImage" class="attention-image" src="" alt="Attention鐑姏鍥? style="max-width: 100%; border-radius: 6px; border: 1px solid #e0e0e0;" />
+                    <img id="attentionImage" class="attention-image" src="" alt="Attention热力图"
+                         style="max-width: 100%; border-radius: 6px; border: 1px solid #e0e0e0;" />
                 </div>
             </div>
 
-            <div class="image-modal" id="imageModal" aria-hidden="true">
-                <button class="close-btn" id="imageModalClose" aria-label="鍏抽棴">鍏抽棴</button>
-                <img id="imageModalImg" src="" alt="鐑姏鍥炬斁澶ч瑙? />
-            </div>
-
             <div class="details-section">
-                <div class="details-title">璇︾粏鍒嗘瀽</div>
-                <div class="details-content" id="detailsContent">绛夊緟缁撴灉...</div>
+                <div class="details-title">详细分析</div>
+                <div class="details-content" id="detailsContent">等待结果...</div>
             </div>
 
             <div class="btn-container">
-                <button type="button" class="btn" id="exportPdfBtn">瀵煎嚭PDF鎶ュ憡</button>
+                <button type="button" class="btn" id="exportPdfBtn">导出PDF报告</button>
             </div>
         </div>
     </div>
 
     <script>
-        console.log('========================================');
-        console.log('[缁撴灉椤甸潰] 寮€濮嬪姞杞?);
-        
+        console.log('[结果页面] 页面加载');
+
         const urlParams = new URLSearchParams(window.location.search);
         const filename = urlParams.get('filename');
         const filepath = urlParams.get('filepath');
-        let resultStr = urlParams.get('result');
 
-        console.log('[缁撴灉椤甸潰] URL 鍙傛暟:');
-        console.log('  - filename:', filename);
-        console.log('  - filepath:', filepath);
-        console.log('  - result:', resultStr ? '鏈夊€?(闀垮害:' + resultStr.length + ')' : 'null');
-
-        const storedFilename = sessionStorage.getItem('lastDetectionFilename');
-        const storedFilepath = sessionStorage.getItem('lastDetectionFilepath');
-        const effectiveFilename = filename || storedFilename;
-        const effectiveFilepath = filepath || storedFilepath;
-
-        console.log('[缁撴灉椤甸潰] sessionStorage:');
-        console.log('  - storedFilename:', storedFilename);
-        console.log('  - storedFilepath:', storedFilepath);
-        console.log('  - effectiveFilename:', effectiveFilename);
-        console.log('  - effectiveFilepath:', effectiveFilepath);
-
-        if (!resultStr || resultStr.trim().length === 0 || resultStr.trim() === '#') {
-            const storedResult = sessionStorage.getItem('lastDetectionResult');
-            const canUseStored = storedResult && storedResult.trim().length > 0
-                && storedFilename && effectiveFilename && storedFilename === effectiveFilename;
-            console.log('[缁撴灉椤甸潰] 灏濊瘯浣跨敤瀛樺偍鐨?result:', canUseStored ? '鏄? : '鍚?);
-            if (canUseStored) {
-                resultStr = storedResult;
-                console.log('[缁撴灉椤甸潰] 宸蹭娇鐢ㄥ瓨鍌ㄧ殑 result锛岄暱搴?', resultStr.length);
-            }
-        }
+        const storedResult = sessionStorage.getItem('lastDetectionResult');
+        const storedMeta = sessionStorage.getItem('lastDetectionMeta');
 
         let resultData = null;
-        let detectionMeta = null;
-        const storedMetaStr = sessionStorage.getItem('lastDetectionMeta');
-        if (storedMetaStr) {
-            try {
-                detectionMeta = JSON.parse(storedMetaStr);
-                console.log('[缁撴灉椤甸潰] 妫€娴嬪埌 meta 淇℃伅');
-            } catch (e) {
-                console.warn('[缁撴灉椤甸潰] 瑙ｆ瀽妫€娴嬫椂闂翠俊鎭け璐?', e);
-            }
+        let metaData = null;
+
+        if (storedResult) {
+            resultData = JSON.parse(storedResult);
         }
 
-        console.log('[缁撴灉椤甸潰] 鍑嗗瑙ｆ瀽 result JSON...');
+        if (storedMeta) {
+            metaData = JSON.parse(storedMeta);
+        }
+
+        document.getElementById('videoName').textContent = filename || '未知文件';
 
         function formatDuration(ms) {
-            const value = Number(ms);
-            if (!Number.isFinite(value) || value < 0) {
-                return '-';
-            }
-            const totalSeconds = Math.round(value / 1000);
-            const seconds = totalSeconds % 60;
-            const minutes = Math.floor(totalSeconds / 60) % 60;
-            const hours = Math.floor(totalSeconds / 3600);
-            let text = '';
-            if (hours > 0) {
-                text += hours + '灏忔椂';
-            }
-            if (minutes > 0 || hours > 0) {
-                text += minutes + '鍒?;
-            }
-            text += seconds + '绉?;
-            return text;
-        }
-
-        function applyDetectionMeta() {
-            const detectTimeEl = document.getElementById('detectTime');
-            const queueDurationEl = document.getElementById('queueDuration');
-            const detectDurationEl = document.getElementById('detectDuration');
-            if (!detectTimeEl || !queueDurationEl || !detectDurationEl) {
-                return;
-            }
-            const canUseMeta = detectionMeta && storedFilename && effectiveFilename && storedFilename === effectiveFilename;
-            if (!canUseMeta) {
-                detectTimeEl.textContent = '-';
-                queueDurationEl.textContent = '-';
-                detectDurationEl.textContent = '-';
-                return;
-            }
-            const detectTimeValue = detectionMeta.detectEndTime || detectionMeta.detectStartTime || '';
-            detectTimeEl.textContent = detectTimeValue || '-';
-            queueDurationEl.textContent = formatDuration(detectionMeta.queueDurationMs);
-            detectDurationEl.textContent = formatDuration(detectionMeta.detectDurationMs);
-        }
-
-        function sanitizeSensitivePaths(text) {
-            if (!text) {
-                return text;
-            }
-            return text
-                .replace(/[A-Za-z]:[\\/][^\s'"<>]+/g, '[璺緞宸查殣钘廬')
-                .replace(/\\\\[^\s'"<>]+/g, '[璺緞宸查殣钘廬')
-                .replace(/\/new_model\/[^\s'"<>]+/g, '[璺緞宸查殣钘廬');
-        }
-
-        function setupImageModal() {
-            const attentionImage = document.getElementById('attentionImage');
-            const modal = document.getElementById('imageModal');
-            const modalImg = document.getElementById('imageModalImg');
-            const closeBtn = document.getElementById('imageModalClose');
-
-            if (!attentionImage || !modal || !modalImg || !closeBtn) {
-                return;
-            }
-
-            attentionImage.addEventListener('click', () => {
-                if (!attentionImage.src) return;
-                modalImg.src = attentionImage.src;
-                modal.classList.add('show');
-                modal.setAttribute('aria-hidden', 'false');
-            });
-
-            const closeModal = () => {
-                modal.classList.remove('show');
-                modal.setAttribute('aria-hidden', 'true');
-                modalImg.src = '';
-            };
-
-            closeBtn.addEventListener('click', closeModal);
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) {
-                    closeModal();
-                }
-            });
-            document.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape') {
-                    closeModal();
-                }
-            });
-        }
-
-        const exportPdfBtn = document.getElementById('exportPdfBtn');
-        if (exportPdfBtn) {
-            exportPdfBtn.addEventListener('click', () => {
-                window.print();
-            });
-        }
-        const backBtn = document.getElementById('backBtn');
-        if (backBtn) {
-            backBtn.addEventListener('click', () => {
-                window.history.back();
-            });
-        }
-
-        document.getElementById('videoName').textContent = effectiveFilename || '鏈煡';
-
-        console.log('[缁撴灉椤甸潰] 寮€濮嬭В鏋?resultStr...');
-        try {
-            if (resultStr && resultStr.trim().length > 0) {
-                // 妫€鏌ユ槸鍚︽槸瀹屾暣鐨?JSON
-                if (resultStr.trim().startsWith('{')) {
-                    console.log('[缁撴灉椤甸潰] resultStr 闀垮害:', resultStr.length);
-                    console.log('[缁撴灉椤甸潰] resultStr 鍓?200 瀛楃:', resultStr.substring(0, Math.min(200, resultStr)));
-                    resultData = JSON.parse(resultStr);
-                    console.log('[缁撴灉椤甸潰] JSON 瑙ｆ瀽鎴愬姛!');
-                    console.log('[缁撴灉椤甸潰] resultData:', resultData);
-                } else {
-                    // 濡傛灉鍙槸绠€鍗曠殑鏂囨湰锛堝"鐪熷疄瑙嗛"锛夛紝鏋勫缓鍩烘湰鐨勭粨鏋滃璞?                    console.log('[缁撴灉椤甸潰] resultStr 鏄畝鍗曟枃鏈?', resultStr);
-                    const isReal = resultStr.includes('鐪熷疄');
-                    resultData = {
-                        success: true,
-                        probability: isReal ? '0.30' : '0.80',  // 榛樿姒傜巼
-                        result: resultStr,
-                        frames: '-',
-                        details: '浠庡巻鍙茶褰曞姞杞斤紝璇︾粏鍒嗘瀽鏁版嵁涓嶅彲鐢?
-                    };
-                    console.log('[缁撴灉椤甸潰] 鏋勫缓鍩烘湰缁撴灉瀵硅薄:', resultData);
-                }
-            } else {
-                console.warn('[缁撴灉椤甸潰] resultStr 涓虹┖');
-                // 灏濊瘯浠?sessionStorage 涓煡鎵炬槸鍚︽湁鍖归厤鐨?result
-                const storedResult = sessionStorage.getItem('lastDetectionResult');
-                const canUseStored = storedResult && storedResult.trim().length > 0;
-                console.log('[缁撴灉椤甸潰] 灏濊瘯浠?sessionStorage 鑾峰彇 result:', canUseStored ? '鏄? : '鍚?);
-                if (canUseStored) {
-                    resultData = JSON.parse(storedResult);
-                    console.log('[缁撴灉椤甸潰] 浠?sessionStorage 鎴愬姛鍔犺浇 result');
-                }
-            }
-        } catch (e) {
-            console.error('[缁撴灉椤甸潰] JSON 瑙ｆ瀽澶辫触:', e);
-            console.error('[缁撴灉椤甸潰] resultStr:', resultStr);
+            if (!ms) return '-';
+            const sec = Math.floor(ms / 1000);
+            return sec + ' 秒';
         }
 
         if (resultData && resultData.success) {
             const probability = parseFloat(resultData.probability) || 0;
-            const result = resultData.result || '';
-            const frames = resultData.frames || resultData.frameCount || '0';
-            const details = resultData.details || '';
-            const safeDetails = sanitizeSensitivePaths(details);
-            let attentionMapPath = resultData.attentionMapPath || sessionStorage.getItem('attentionMapPath') || '';
+            const percent = (probability * 100).toFixed(2);
 
-            const probPercent = (probability * 100).toFixed(2);
-            setTimeout(() => {
-                const probBar = document.getElementById('probabilityBar');
-                const probText = document.getElementById('probabilityText');
-                probBar.style.width = probPercent + '%';
-                probBar.textContent = '';
-                if (probText) {
-                    probText.textContent = probPercent + '%';
-                }
-            }, 200);
+            document.getElementById('probabilityBar').style.width = percent + '%';
+            document.getElementById('probabilityText').textContent = percent + '%';
 
             const isReal = probability < 0.5;
-            const resultLabel = result.replace('AI 鐢熸垚', 'AI鐢熸垚');
-            document.getElementById('resultTitle').textContent = isReal ? '鐪熷疄瑙嗛' : 'AI鐢熸垚瑙嗛';
-            document.getElementById('resultTitle').className = 'result-title ' + (isReal ? 'result-real' : 'result-ai');
+            document.getElementById('resultTitle').textContent = isReal ? '真实视频' : 'AI生成视频';
 
             const badge = document.getElementById('resultBadge');
-            badge.textContent = resultLabel || (isReal ? '鐪熷疄瑙嗛' : 'AI鐢熸垚瑙嗛');
-            badge.className = 'badge ' + (isReal ? 'badge-real' : 'badge-ai');
+            badge.textContent = isReal ? '真实视频' : 'AI生成视频';
 
-            document.getElementById('frameCount').textContent = frames;
-            applyDetectionMeta();
+            document.getElementById('frameCount').textContent = resultData.frames || '-';
 
-            document.getElementById('detailsContent').textContent = safeDetails || '鏃犺缁嗕俊鎭?;
-
-            if (attentionMapPath && attentionMapPath.trim().length > 0) {
-                const attentionImage = document.getElementById('attentionImage');
-                const attentionSection = document.getElementById('attentionSection');
-                            
-                console.log('[鐑姏鍥綸 鍘熷璺緞:', attentionMapPath);
-                console.log('[鐑姏鍥綸 鍘熷璺緞绫诲瀷:', typeof attentionMapPath);
-                console.log('[鐑姏鍥綸 鍘熷璺緞闀垮害:', attentionMapPath.length);
-                            
-                let imagePath = attentionMapPath.replace(/\\/g, '/');
-                console.log('[鐑姏鍥綸 鏇挎崲鍙嶆枩鏉犲悗:', imagePath);
-                                
-                // 绉婚櫎寮€澶寸殑鏂滄潬
-                imagePath = imagePath.replace(/^\/+/, '');
-                console.log('[鐑姏鍥綸 绉婚櫎寮€澶存枩鏉犲悗:', imagePath);
-            
-                // 鎸変紭鍏堢骇鍖归厤璺緞鍓嶇紑骞惰浆鎹?                const lastUploadsIndex = imagePath.lastIndexOf('/uploads/');
-                if (lastUploadsIndex !== -1) {
-                    imagePath = '/uploads/' + imagePath.substring(lastUploadsIndex + '/uploads/'.length);
-                    console.log('[鐑姏鍥綸 鎴柇鍒版渶鍚庝竴涓?/uploads/ ->', imagePath);
-                } else if (imagePath.startsWith('uploads/')) {
-                    imagePath = '/' + imagePath;
-                    console.log('[鐑姏鍥綸 琛ュ叏 uploads/ 鍓嶇紑 ->', imagePath);
-                } else {
-                    imagePath = '/uploads/' + imagePath;
-                    console.log('[鐑姏鍥綸 浣跨敤 uploads 鍓嶇紑 ->', imagePath);
-                }
-                            
-                // 纭繚涓嶄互鍙屾枩鏉犲紑澶?                imagePath = imagePath.replace(/^\/\//, '/');
-                console.log('[鐑姏鍥綸 鏈€缁堣矾寰?', imagePath);
-                console.log('[鐑姏鍥綸 鏈€缁堣矾寰勯暱搴?', imagePath.length);
-            
-                attentionImage.src = imagePath;
-                attentionImage.onerror = function() {
-                    if (imagePath.endsWith('.svg')) {
-                        const pngPath = imagePath.replace('.svg', '.png');
-                        this.src = pngPath;
-                    }
-                };
-                attentionImage.onload = function() {
-                    setupImageModal();
-                };
-                attentionSection.style.display = 'block';
+            if (metaData) {
+                document.getElementById('detectTime').textContent = metaData.detectEndTime || '-';
+                document.getElementById('queueDuration').textContent = formatDuration(metaData.queueDurationMs);
+                document.getElementById('detectDuration').textContent = formatDuration(metaData.detectDurationMs);
             }
 
-            document.title = (isReal ? '鐪熷疄瑙嗛' : 'AI 鐢熸垚瑙嗛') + ' - 妫€娴嬫姤鍛?;
-            console.log('[缁撴灉椤甸潰] 娓叉煋瀹屾垚 - 鎴愬姛');
-            console.log('========================================');
+            document.getElementById('detailsContent').textContent = resultData.details || '无详细信息';
+
         } else {
-            console.warn('[缁撴灉椤甸潰] resultData.success 涓?false 鎴?resultData 涓嶅瓨鍦?);
-            document.getElementById('resultTitle').textContent = '妫€娴嬪け璐?;
-            document.getElementById('resultTitle').className = 'result-title result-ai';
-            const badge = document.getElementById('resultBadge');
-            badge.textContent = '鏃犳硶瑙ｆ瀽缁撴灉';
-            badge.className = 'badge badge-ai';
-            const safeResultStr = sanitizeSensitivePaths(resultStr);
-            document.getElementById('detailsContent').textContent = safeResultStr ? safeResultStr : '鏈幏鍙栧埌妫€娴嬬粨鏋?;
-            console.log('[缁撴灉椤甸潰] 娓叉煋瀹屾垚 - 澶辫触');
-            console.log('========================================');
+            document.getElementById('resultTitle').textContent = '检测失败';
+            document.getElementById('detailsContent').textContent = '未获取到结果';
         }
+
+        document.getElementById('backBtn').onclick = () => history.back();
+        document.getElementById('exportPdfBtn').onclick = () => window.print();
     </script>
 </body>
 </html>
-
-
-

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI生成视频检测系统</title>
-        <link rel="stylesheet" href="/static/css/index.css">
+    <link rel="stylesheet" href="/static/css/index.css">
 </head>
 <body>
     <div class="container">
@@ -16,11 +16,14 @@
         </div>
 
         <div class="disclaimer" id="disclaimer">
-            <h4 style="margin: 0 0 8px 0; color: #333; font-size: 14px;">鎻愮ず</h4>
-            <p style="margin: 0; color: #666; line-height: 1.5; font-size: 13px;">
-                鏈郴缁熼噰鐢ˋI鎶€鏈繘琛岃棰戠湡浼壌鍒紝妫€娴嬬粨鏋滀粎渚涘弬鑰冦€傛垜浠笉瀵规娴嬬粨鏋滅殑鍑嗙‘鎬у仛鍑轰换浣曚繚璇侊紝寤鸿鎮ㄧ粨鍚堝叾浠栦笓涓氭墜娈电患鍚堝垽鏂€傝鐞嗘€х湅寰呮娴嬬粨璁猴紝璋ㄦ厧杈ㄥ埆瑙嗛鍐呭銆?
+            <h4>提示</h4>
+            <p>
+                本系统采用AI技术进行视频真伪鉴别，检测结果仅供参考。
+                我们不对检测结果的准确性做出任何保证，建议结合其他手段综合判断。
+                请理性看待检测结论，谨慎辨别视频内容。
             </p>
         </div>
+
         <div id="alert" class="alert"></div>
 
         <form id="uploadForm" enctype="multipart/form-data">
@@ -28,526 +31,116 @@
                 <div class="panel panel-left">
                     <div class="upload-area" id="uploadArea">
                         <div id="uploadPlaceholder">
-                            <div class="upload-text">鐐瑰嚮閫夋嫨瑙嗛鎴栧皢鏂囦欢鎷栨嫿鍒版澶?</div>
-                            <div class="upload-hint">鏀寔鏍煎紡锛歁P4, AVI, MOV, MKV, WMV, FLV绛夛紙鏈€澶?00MB锛?</div>
+                            <div class="upload-text">点击选择视频或拖拽到此处</div>
+                            <div class="upload-hint">支持格式：MP4, AVI, MOV, MKV, WMV, FLV（最大100MB）</div>
                         </div>
-                        <video id="uploadVideo" class="loading-video" muted playsinline style="display: none;"></video>
+                        <video id="uploadVideo" muted playsinline style="display: none;"></video>
                         <input type="file" id="fileInput" name="video" accept="video/*">
                     </div>
                 </div>
 
                 <div class="panel">
                     <div class="field-row">
-                        <label for="attnTopK">鐑姏鍥炬暟閲?</label>
-                        <input type="number" id="attnTopK" name="attnTopK" min="1" max="20" step="1" value="5">
-                        <div class="field-hint">榛樿5锛屽缓璁?-10</div>
-                    </div>
-                    <div class="field-row">
-                        <label for="threshold">鍒ゅ畾闃堝€?</label>
-                        <input type="number" id="threshold" name="threshold" min="0.01" max="0.99" step="0.01" value="0.10">
-                        <div class="field-hint">榛樿0.10锛岃寖鍥?.01-0.99</div>
-                    </div>
-                    <div class="field-row">
-                        <label for="frameInterval">鎶藉抚闂撮殧</label>
-                        <input type="number" id="frameInterval" name="frameInterval" min="0" max="120" step="1" value="0">
-                        <div class="field-hint">0琛ㄧず鍏ㄩ儴锛堥粯璁わ級</div>
-                        <div class="field-hint">琛ㄧず鍩哄噯甯ф闀匡紝鏃跺簭浣跨敤x+1/x+2/x+4</div>
+                        <label>热力图数量</label>
+                        <input type="number" id="attnTopK" value="5">
+                        <div class="field-hint">建议 3-10</div>
                     </div>
 
-                    <button type="submit" class="btn" id="submitBtn" style="width: 100%;">寮€濮嬫娴?</button>
+                    <div class="field-row">
+                        <label>判定阈值</label>
+                        <input type="number" id="threshold" value="0.10" step="0.01">
+                    </div>
 
+                    <div class="field-row">
+                        <label>抽帧间隔</label>
+                        <input type="number" id="frameInterval" value="0">
+                        <div class="field-hint">0表示全部帧</div>
+                    </div>
+
+                    <button type="submit" class="btn" id="submitBtn">开始检测</button>
                 </div>
             </div>
 
-            <div class="file-info" id="fileInfo" style="margin-top: 16px;">
-                <div class="file-info-row">
-                    <div class="file-info-content">
-                        <div class="file-name" id="fileName"></div>
-                        <div class="file-size" id="fileSize"></div>
-                    </div>
-                    <button type="button" class="btn btn-secondary" id="clearFileBtn">娓呴櫎宸查€夎棰?</button>
-                </div>
-                <div class="preview-hint" id="previewHint" style="display: none;">褰撳墠娴忚鍣ㄤ笉鏀寔璇ヨ棰戠紪鐮侊紝棰勮涓嶅彲鐢紝浣嗕粛鍙娴嬨€?</div>
+            <div class="file-info" id="fileInfo">
+                <div class="file-name" id="fileName"></div>
+                <div class="file-size" id="fileSize"></div>
+                <button type="button" id="clearFileBtn">清除文件</button>
             </div>
         </form>
 
         <div class="loading" id="loading">
-            <div class="loading-text">姝ｅ湪鍒嗘瀽瑙嗛锛岃绋嶅€?..</div>
-            <div class="loading-text" style="font-size: 12px; margin-top: 10px;">
-                AI妯″瀷姝ｅ湪澶勭悊涓紝杩欏彲鑳介渶瑕佷竴浜涙椂闂?
-            </div>
-            
-            <div class="progress-container" id="progressContainer">
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progressFill">0%</div>
-                </div>
-                <div class="progress-info" id="progressInfo">姝ｅ湪鍒濆鍖?..</div>
-            </div>
+            <div>正在分析视频，请稍候...</div>
+            <div id="progressInfo">初始化中...</div>
         </div>
     </div>
 
     <script>
-        const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
-        const fileInfo = document.getElementById('fileInfo');
         const fileName = document.getElementById('fileName');
         const fileSize = document.getElementById('fileSize');
         const uploadForm = document.getElementById('uploadForm');
         const submitBtn = document.getElementById('submitBtn');
-        const loading = document.getElementById('loading');
-        const alert = document.getElementById('alert');
-        const progressContainer = document.getElementById('progressContainer');
-        const progressFill = document.getElementById('progressFill');
-        const progressInfo = document.getElementById('progressInfo');
-        const attnTopK = document.getElementById('attnTopK');
-        const threshold = document.getElementById('threshold');
-        const frameInterval = document.getElementById('frameInterval');
-        const uploadVideo = document.getElementById('uploadVideo');
-        const uploadPlaceholder = document.getElementById('uploadPlaceholder');
-        const clearFileBtn = document.getElementById('clearFileBtn');
-        const previewHint = document.getElementById('previewHint');
+        const alertBox = document.getElementById('alert');
 
         let selectedFile = null;
-        let currentTaskId = null;
-        let eventSource = null;
-        let totalFrames = 0;
-        let processedFrames = 0;
-        let loadingVideoUrl = null;
-        let previewUrl = null;
-        let previewRequestToken = 0;
-        let previewRequestController = null;
-        let previewRequested = false;
-        let previewCheckTimer = null;
-        let localPreviewReady = false;
-        let previewInProgress = false;
 
-        // 鐐瑰嚮涓婁紶鍖哄煙
-        uploadArea.addEventListener('click', () => {
-            fileInput.click();
-        });
-
-        // 鏂囦欢閫夋嫨
         fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                handleFile(e.target.files[0]);
-            }
-        });
+            const file = e.target.files[0];
+            if (!file) return;
 
-        // 鎷栨嫿浜嬩欢
-        uploadArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadArea.classList.add('dragover');
-        });
-
-        uploadArea.addEventListener('dragleave', () => {
-            uploadArea.classList.remove('dragover');
-        });
-
-        uploadArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadArea.classList.remove('dragover');
-            
-            if (e.dataTransfer.files.length > 0) {
-                handleFile(e.dataTransfer.files[0]);
-            }
-        });
-
-        // 澶勭悊鏂囦欢
-        function handleFile(file) {
             selectedFile = file;
-            previewRequested = false;
-            previewUrl = null;
-            previewRequestToken += 1;
-            if (previewRequestController) {
-                previewRequestController.abort();
-                previewRequestController = null;
-            }
-            if (previewCheckTimer) {
-                clearTimeout(previewCheckTimer);
-                previewCheckTimer = null;
-            }
-            localPreviewReady = false;
-            previewInProgress = false;
-            const loadToken = previewRequestToken;
-            fileName.textContent = '鏂囦欢鍚嶏細' + file.name;
-            fileSize.textContent = '澶у皬锛? + formatFileSize(file.size);
-            fileInfo.classList.add('show');
-            showAlert('姝ｅ湪浣跨敤 FFmpeg 鐢熸垚棰勮...', 'success');
-                    
-            // 鐩存帴璇锋眰鍚庣 FFmpeg 杞爜棰勮
-            if (uploadVideo) {
-                if (loadingVideoUrl) {
-                    URL.revokeObjectURL(loadingVideoUrl);
-                    loadingVideoUrl = null;
-                }
-                uploadVideo.src = '';
-                uploadVideo.style.display = 'none';
-                if (uploadPlaceholder) {
-                    uploadPlaceholder.style.display = 'block';
-                }
-                if (previewHint) {
-                    previewHint.style.display = 'none';
-                }
-                // 鐩存帴璋冪敤鍚庣棰勮
-                requestServerPreview(selectedFile);
-            }
+            fileName.textContent = '文件名：' + file.name;
+            fileSize.textContent = '大小：' + formatSize(file.size);
+        });
+
+        function formatSize(size) {
+            if (size < 1024) return size + ' B';
+            if (size < 1024 * 1024) return (size / 1024).toFixed(2) + ' KB';
+            return (size / (1024 * 1024)).toFixed(2) + ' MB';
         }
 
-        function clearSelectedFile() {
-            selectedFile = null;
-            previewRequested = false;
-            previewUrl = null;
-            previewRequestToken += 1;
-            if (previewRequestController) {
-                previewRequestController.abort();
-                previewRequestController = null;
-            }
-            if (previewCheckTimer) {
-                clearTimeout(previewCheckTimer);
-                previewCheckTimer = null;
-            }
-            localPreviewReady = false;
-            previewInProgress = false;
-            fileInput.value = '';
-            fileInfo.classList.remove('show');
-            hideAlert();
-            if (uploadVideo) {
-                uploadVideo.pause();
-                uploadVideo.removeAttribute('src');
-                uploadVideo.load();
-                uploadVideo.style.display = 'none';
-            }
-            if (uploadPlaceholder) {
-                uploadPlaceholder.style.display = 'block';
-            }
-            if (previewHint) {
-                previewHint.style.display = 'none';
-            }
-            if (loadingVideoUrl) {
-                URL.revokeObjectURL(loadingVideoUrl);
-                loadingVideoUrl = null;
-            }
+        function showAlert(msg, type) {
+            alertBox.textContent = msg;
+            alertBox.className = 'alert show ' + type;
         }
 
-        function usePreviewUrl(url) {
-            if (!uploadVideo || !url) return;
-            previewUrl = url;
-            previewInProgress = false;
-            if (loadingVideoUrl) {
-                URL.revokeObjectURL(loadingVideoUrl);
-                loadingVideoUrl = null;
-            }
-            uploadVideo.src = url;
-            uploadVideo.loop = true;
-            uploadVideo.muted = true;
-            uploadVideo.load();
-            uploadVideo.style.display = 'block';
-            if (uploadPlaceholder) {
-                uploadPlaceholder.style.display = 'none';
-            }
-            uploadVideo.play().catch(() => {});
-        }
-
-        function startLoadingVideo() {
-            if (!selectedFile) return;
-            if (uploadArea) {
-                uploadArea.classList.add('disabled');
-            }
-            if (fileInput) {
-                fileInput.disabled = true;
-            }
-        }
-
-        function stopLoadingVideo() {
-            previewInProgress = false;
-            if (uploadArea) {
-                uploadArea.classList.remove('disabled');
-            }
-            if (fileInput) {
-                fileInput.disabled = false;
-            }
-        }
-
-        if (clearFileBtn) {
-            clearFileBtn.addEventListener('click', () => {
-                if (submitBtn.disabled) {
-                    return;
-                }
-                clearSelectedFile();
-            });
-        }
-
-        // 鏍煎紡鍖栨枃浠跺ぇ灏?
-        function formatFileSize(bytes) {
-            if (bytes < 1024) return bytes + ' B';
-            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
-            if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
-            return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
-        }
-
-        // 鏄剧ず鎻愮ず淇℃伅
-        function showAlert(message, type) {
-            alert.textContent = message;
-            alert.className = 'alert show alert-' + type;
-        }
-
-        // 闅愯棌鎻愮ず
-        function hideAlert() {
-            alert.className = 'alert';
-        }
-
-        // 琛ㄥ崟鎻愪氦
         uploadForm.addEventListener('submit', async (e) => {
             e.preventDefault();
 
             if (!selectedFile) {
-                showAlert('璇峰厛閫夋嫨瑙嗛鏂囦欢', 'error');
+                showAlert('请先选择视频', 'error');
                 return;
             }
 
             const formData = new FormData();
             formData.append('video', selectedFile);
-            if (attnTopK && attnTopK.value) {
-                formData.append('attnTopK', attnTopK.value);
-            }
-            if (threshold && threshold.value) {
-                formData.append('threshold', threshold.value);
-            }
-            if (frameInterval && frameInterval.value !== '') {
-                formData.append('everyN', frameInterval.value);
-            }
 
             submitBtn.disabled = true;
-            loading.classList.add('show');
-            progressContainer.classList.add('show');
-            hideAlert();
-            startLoadingVideo();
 
             try {
-                const response = await fetch('/upload', {
+                const res = await fetch('/upload', {
                     method: 'POST',
                     body: formData
                 });
 
-                const data = await response.json();
+                const data = await res.json();
 
                 if (data.success) {
-                    currentTaskId = data.taskId;
-                    showAlert('妫€娴嬪凡鍚姩锛屾鍦ㄥ垎鏋愯棰?..', 'success');
-                    
-                    // 杩炴帴 SSE 杩涘害鎺ㄩ€?
-                    connectToProgress(data.taskId);
+                    showAlert('检测完成，跳转中...', 'success');
+
+                    sessionStorage.setItem('lastDetectionResult', JSON.stringify(data.result));
+                    sessionStorage.setItem('lastDetectionFilename', data.filename);
+
+                    window.location.href = '/result?filename=' + encodeURIComponent(data.filename);
                 } else {
-                    showAlert(data.message || '妫€娴嬪け璐?, 'error');
+                    showAlert('检测失败：' + data.message, 'error');
                     submitBtn.disabled = false;
-                    loading.classList.remove('show');
-                    progressContainer.classList.remove('show');
-                    stopLoadingVideo();
                 }
-            } catch (error) {
-                showAlert('缃戠粶閿欒锛? + error.message, 'error');
+            } catch (err) {
+                showAlert('网络错误：' + err.message, 'error');
                 submitBtn.disabled = false;
-                loading.classList.remove('show');
-                progressContainer.classList.remove('show');
-                stopLoadingVideo();
             }
         });
-
-        async function requestServerPreview(file) {
-            console.log('馃幀 [棰勮] 寮€濮嬭姹傛湇鍔″櫒棰勮');
-            if (!file) {
-                console.warn('[棰勮] 鏂囦欢涓虹┖锛岃烦杩囪姹?);
-                return;
-            }
-            const token = ++previewRequestToken;
-            if (previewRequestController) {
-                previewRequestController.abort();
-            }
-            previewRequestController = new AbortController();
-            const formData = new FormData();
-            formData.append('video', file);
-            console.log('[棰勮] 鍙戦€佽姹傚埌 /preview, 鏂囦欢鍚?', file.name);
-            try {
-                const response = await fetch('/preview', {
-                    method: 'POST',
-                    body: formData,
-                    signal: previewRequestController.signal
-                });
-                console.log('[棰勮] 鍝嶅簲鐘舵€?', response.status);
-                const data = await response.json();
-                console.log('[棰勮] 鍝嶅簲鏁版嵁:', data);
-                if (token !== previewRequestToken) {
-                    console.warn('[棰勮] 璇锋眰宸茶繃鏈燂紝蹇界暐鍝嶅簲');
-                    return;
-                }
-                if (!data || !data.success) {
-                    console.warn('[棰勮] 鏈嶅姟鍣ㄨ繑鍥炲け璐?', data);
-                }
-                if (data && data.success && data.previewUrl) {
-                    console.log('[棰勮] 鎴愬姛锛孶RL:', data.previewUrl);
-                    // 鏇存柊椤堕儴 alert 鎻愮ず
-                    if (alert) {
-                        alert.textContent = '棰勮宸插氨缁紝璇风偣鍑?寮€濮嬫娴?';
-                        alert.className = 'alert show alert-success alert-ready';
-                    }
-                    // 闅愯棌棰勮鎻愮ず
-                    if (previewHint) {
-                        previewHint.style.display = 'none';
-                    }
-                    usePreviewUrl(data.previewUrl);
-                } else {
-                    console.warn('[棰勮] 娌℃湁 previewUrl锛屾樉绀烘彁绀?);
-                    if (previewHint) {
-                        previewHint.textContent = (data && data.message) ? data.message : '棰勮涓嶅彲鐢紝浣嗕粛鍙娴嬨€?;
-                        previewHint.style.color = '#dc3545';
-                        previewHint.style.display = 'block';
-                    }
-                    previewInProgress = false;
-                }
-            } catch (error) {
-                console.error('[棰勮] 璇锋眰澶辫触:', error);
-                if (error.name === 'AbortError') {
-                    console.log('[棰勮] 璇锋眰琚彇娑?);
-                    return;
-                }
-                if (token !== previewRequestToken) {
-                    console.warn('[棰勮] 璇锋眰宸茶繃鏈燂紝蹇界暐閿欒');
-                    return;
-                }
-                if (previewHint) {
-                    previewHint.textContent = '棰勮涓嶅彲鐢紝浣嗕粛鍙娴嬨€?;
-                    previewHint.style.color = '#dc3545';
-                    previewHint.style.display = 'block';
-                }
-                previewInProgress = false;
-            } finally {
-                if (token === previewRequestToken) {
-                    previewRequestController = null;
-                    console.log('[棰勮] 娓呯悊瀹屾垚');
-                }
-            }
-        }
-
-        // 杩炴帴 SSE 杩涘害鎺ㄩ€?
-        function connectToProgress(taskId) {
-            console.log('姝ｅ湪杩炴帴 SSE锛宼askId:', taskId);
-            const eventSource = new EventSource('/progress/' + taskId);
-            
-            eventSource.onopen = function(event) {
-                console.log('SSE 杩炴帴宸叉墦寮€');
-            };
-            
-            eventSource.onmessage = function(event) {
-                console.log('鏀跺埌 SSE 娑堟伅:', event.data);
-                const data = JSON.parse(event.data);
-                
-                if (data.type === 'connected') {
-                    console.log('宸茶繛鎺ュ埌杩涘害鎺ㄩ€?);
-                } else if (data.type === 'queued') {
-                    const ahead = Number.isFinite(data.position) ? data.position : 0;
-                    progressContainer.classList.add('show');
-                    progressFill.style.width = '0%';
-                    progressFill.textContent = '';
-                    progressInfo.textContent = ahead > 0 ? ('鎺掗槦涓紝鍓嶆柟杩樻湁' + ahead + '浜?) : '鎺掗槦涓?;
-                } else if (data.type === 'start') {
-                    progressInfo.textContent = '寮€濮嬫娴?..';
-                } else if (data.type === 'progress') {
-                    // 鏇存柊杩涘害
-                    updateProgress(data.frames, data.total, data.message);
-                } else if (data.type === 'complete') {
-                    console.log('妫€娴嬪畬鎴愶紝鍑嗗璺宠浆锛屾暟鎹?', data);
-                    // 妫€娴嬪畬鎴?
-                    eventSource.close();
-                    showAlert('妫€娴嬪畬鎴愶紒姝ｅ湪鏌ョ湅缁撴灉...', 'success');
-                    stopLoadingVideo();
-                    setTimeout(() => {
-                        // 閬垮厤鎶婂ぇ JSON 濉炶繘 URL锛堟祻瑙堝櫒/鏈嶅姟鍣ㄥ彲鑳芥埅鏂鑷磋В鏋愬け璐ワ級
-                        try {
-                            if (data.result != null) {
-                                const resultValue = (typeof data.result === 'string') ? data.result : JSON.stringify(data.result);
-                                sessionStorage.setItem('lastDetectionResult', resultValue);
-                            } else {
-                                sessionStorage.removeItem('lastDetectionResult');
-                            }
-                            if (data.filename) sessionStorage.setItem('lastDetectionFilename', data.filename);
-                            if (data.filepath) sessionStorage.setItem('lastDetectionFilepath', data.filepath);
-                            try {
-                                const detectDurationValue = Number(data.detectDurationMs);
-                                const queueDurationValue = Number(data.queueDurationMs);
-                                const meta = {
-                                    detectStartTime: data.detectStartTime || '',
-                                    detectEndTime: data.detectEndTime || '',
-                                    detectDurationMs: Number.isFinite(detectDurationValue) ? detectDurationValue : null,
-                                    queueDurationMs: Number.isFinite(queueDurationValue) ? queueDurationValue : null
-                                };
-                                sessionStorage.setItem('lastDetectionMeta', JSON.stringify(meta));
-                            } catch (e) {
-                                console.warn('淇濆瓨妫€娴嬫椂闂翠俊鎭け璐?', e);
-                            }
-                        } catch (e) {
-                            console.warn('淇濆瓨妫€娴嬬粨鏋滃埌 sessionStorage 澶辫触:', e);
-                        }
-
-                        window.location.href = '/result?filename=' +
-                            encodeURIComponent(data.filename || '') +
-                            '&filepath=' + encodeURIComponent(data.filepath || '');
-                    }, 1000);
-                } else if (data.type === 'error') {
-                    // 鍙戠敓閿欒
-                    eventSource.close();
-                    showAlert('妫€娴嬪け璐ワ細' + data.message, 'error');
-                    submitBtn.disabled = false;
-                    loading.classList.remove('show');
-                    progressContainer.classList.remove('show');
-                    stopLoadingVideo();
-                }
-            };
-            
-            eventSource.onerror = function(error) {
-                console.error('SSE 杩炴帴閿欒:', error);
-                console.error('SSE readyState:', eventSource.readyState);
-                // 濡傛灉杩炴帴宸插叧闂紙readyState === 2锛夛紝鏄剧ず閿欒
-                if (eventSource.readyState === 2) {
-                    showAlert('涓庢湇鍔″櫒杩炴帴鏂紑', 'error');
-                    submitBtn.disabled = false;
-                    loading.classList.remove('show');
-                    progressContainer.classList.remove('show');
-                }
-                // 涓嶈绔嬪嵆鏄剧ず閿欒锛岀瓑寰呮湇鍔″櫒鍙戦€侀敊璇秷鎭?
-            };
-        }
-
-        // 鏇存柊杩涘害鏉?
-        function updateProgress(frames, total, message) {
-            if (total > 0) {
-                const percent = Math.round((frames / total) * 100);
-                progressFill.style.width = percent + '%';
-                progressFill.textContent = percent + '% (' + frames + '/' + total + ')';
-            } else {
-                progressFill.style.width = '50%';
-                progressFill.textContent = '澶勭悊涓?..';
-            }
-            
-            if (message) {
-                progressInfo.textContent = message;
-            }
-        }
     </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

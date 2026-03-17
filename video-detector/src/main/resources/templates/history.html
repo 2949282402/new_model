@@ -1,41 +1,41 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>鍘嗗彶妫€娴嬭褰?- AI鐢熸垚瑙嗛妫€娴嬬郴缁?</title>
-        <link rel="stylesheet" href="/static/css/history.css">
+    <title>历史检测记录 - AI生成视频检测系统</title>
+    <link rel="stylesheet" href="/static/css/history.css">
 </head>
 <body>
     <div class="container">
         <div class="top-nav">
-            <a href="/" class="btn btn-primary">杩斿洖棣栭〉</a>
+            <a href="/" class="btn btn-primary">返回首页</a>
         </div>
 
-        <h1>鍘嗗彶妫€娴嬭褰?</h1>
-        <p class="subtitle">鏌ョ湅鍜岀鐞嗘偍鐨勬墍鏈夋娴嬭褰?</p>
+        <h1>历史检测记录</h1>
+        <p class="subtitle">查看和管理您的所有检测记录</p>
 
         <div class="record-list" th:if="${records != null and !records.isEmpty()}">
             <div class="record-item" th:each="record : ${records}">
                 <div class="record-header">
                     <div class="record-title">
-                        <span th:text="${record.originalFilename}">鏂囦欢鍚?</span>
+                        <span th:text="${record.originalFilename}">文件名</span>
                         <span class="badge" 
-                              th:classappend="${record.result != null && record.result.contains('鐪熷疄') ? 'badge-real' : 'badge-ai'}"
-                              th:text="${record.result != null ? #strings.replace(record.result, 'AI 鐢熸垚', 'AI鐢熸垚') : '妫€娴嬩腑'}">缁撴灉</span>
+                              th:classappend="${record.result != null && record.result.contains('真实') ? 'badge-real' : 'badge-ai'}"
+                              th:text="${record.result != null ? #strings.replace(record.result, 'AI 生成', 'AI生成') : '检测中'}">结果</span>
                     </div>
-                    <div class="record-time" th:text="${#temporals.format(record.detectTime, 'yyyy-MM-dd HH:mm:ss')}">鏃堕棿</div>
+                    <div class="record-time" th:text="${#temporals.format(record.detectTime, 'yyyy-MM-dd HH:mm:ss')}">时间</div>
                 </div>
 
                 <div class="record-info">
                     <div class="info-item">
-                        <span class="info-label">姒傜巼锛?</span>
+                        <span class="info-label">概率：</span>
                         <span th:if="${record.probability != null}" 
                               th:text="${record.probability} + '%'">-</span>
                         <span th:unless="${record.probability != null}">-</span>
                     </div>
                     <div class="info-item">
-                        <span class="info-label">甯ф暟锛?</span>
+                        <span class="info-label">帧数：</span>
                         <span th:if="${record.frameCount != null}" th:text="${record.frameCount}">-</span>
                         <span th:unless="${record.frameCount != null}">-</span>
                     </div>
@@ -51,31 +51,34 @@
                        th:data-probability="${record.probability}"
                        th:data-framecount="${record.frameCount}"
                        th:data-detecttime="${#temporals.format(record.detectTime, 'yyyy-MM-dd HH:mm:ss')}">
-                        鏌ョ湅璇︽儏
+                        查看详情
                     </a>
                     <button class="btn btn-danger delete-btn" th:data-record-id="${record.id}">
-                        鍒犻櫎璁板綍
+                        删除记录
                     </button>
                 </div>
             </div>
         </div>
 
         <div class="empty-state" th:if="${records == null or records.isEmpty()}">
-            <h3>鏆傛棤妫€娴嬭褰?</h3>
-            <p style="margin-top: 10px;">鎮ㄨ繕娌℃湁杩涜杩囦换浣曡棰戞娴?</p>
-            <a href="/" class="btn btn-primary" style="margin-top: 20px;">寮€濮嬫娴?</a>
+            <h3>暂无检测记录</h3>
+            <p style="margin-top: 10px;">您还没有进行过任何视频检测</p>
+            <a href="/" class="btn btn-primary" style="margin-top: 20px;">开始检测</a>
         </div>
     </div>
 
     <script>
-        // 娣诲姞鏌ョ湅璇︽儏鎸夐挳鐨勭偣鍑讳簨浠?        document.addEventListener('DOMContentLoaded', function() {
-            console.log('[鍘嗗彶璁板綍] 椤甸潰鍔犺浇瀹屾垚');
+        // 页面加载完成
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('[历史记录] 页面加载完成');
+
             const viewButtons = document.querySelectorAll('.view-btn');
-            console.log('[鍘嗗彶璁板綍] 鎵惧埌', viewButtons.length, '涓煡鐪嬭鎯呮寜閽?);
-            
+            console.log('[历史记录] 找到', viewButtons.length, '个查看详情按钮');
+
             viewButtons.forEach(function(button) {
                 button.addEventListener('click', function(e) {
                     e.preventDefault();
+
                     const id = this.getAttribute('data-id');
                     const filepath = this.getAttribute('data-filepath');
                     const attentionPath = this.getAttribute('data-attention');
@@ -83,88 +86,61 @@
                     const probabilityStr = this.getAttribute('data-probability');
                     const frameCountStr = this.getAttribute('data-framecount');
                     const detectTimeStr = this.getAttribute('data-detecttime');
-                    
-                    console.log('========================================');
-                    console.log('[鍘嗗彶璁板綍] 鐐瑰嚮鏌ョ湅璇︽儏');
-                    console.log('[鍘嗗彶璁板綍] 璁板綍 ID:', id);
-                    console.log('[鍘嗗彶璁板綍] 鏂囦欢璺緞:', filepath);
-                    console.log('[鍘嗗彶璁板綍] 鐑姏鍥捐矾寰?', attentionPath);
-                    console.log('[鍘嗗彶璁板綍] 妫€娴嬬粨鏋?', resultStr);
-                    console.log('[鍘嗗彶璁板綍] 姒傜巼:', probabilityStr);
-                    console.log('[鍘嗗彶璁板綍] 甯ф暟:', frameCountStr);
-                    console.log('[鍘嗗彶璁板綍] 妫€娴嬫椂闂?', detectTimeStr);
-                    
-                    // 鍏堜粠 sessionStorage 娓呯悊鏃ф暟鎹?                    sessionStorage.removeItem('lastDetectionResult');
-                    sessionStorage.removeItem('lastDetectionFilename');
-                    sessionStorage.removeItem('lastDetectionFilepath');
-                    sessionStorage.removeItem('lastDetectionMeta');
-                    console.log('[鍘嗗彶璁板綍] 宸叉竻鐞嗘棫 sessionStorage 鏁版嵁');
-                    
-                    // 淇濆瓨鐑姏鍥捐矾寰勫埌 sessionStorage
+
+                    console.log('[历史记录] 点击查看详情 ID:', id);
+
+                    sessionStorage.clear();
+
                     if (attentionPath && attentionPath.trim().length > 0) {
                         sessionStorage.setItem('attentionMapPath', attentionPath);
-                        console.log('[鍘嗗彶璁板綍] 宸蹭繚瀛樼儹鍔涘浘璺緞鍒?sessionStorage:', attentionPath);
-                    } else {
-                        console.warn('[鍘嗗彶璁板綍] 鐑姏鍥捐矾寰勪负绌猴紝鏈繚瀛?);
                     }
 
-                    // 璺宠浆鍒扮粨鏋滈〉闈?                    const recordItem = this.closest('.record-item');
+                    const recordItem = this.closest('.record-item');
                     const filename = recordItem.querySelector('.record-title span').textContent;
-                    
-                    console.log('[鍘嗗彶璁板綍] 鏂囦欢鍚?', filename);
-                    
-                    // 鏋勫缓鍘嗗彶璁板綍鐨勭粨鏋滃璞★紝閬垮厤 URL 浼犻€掕繃闀?                    let normalizedProb = null;
+
+                    let normalizedProb = null;
                     const rawProb = parseFloat(probabilityStr);
                     if (Number.isFinite(rawProb)) {
                         normalizedProb = rawProb / 100;
                     }
+
                     const historyResult = {
                         success: true,
                         probability: normalizedProb != null ? normalizedProb.toFixed(4) : '',
                         result: resultStr || '',
                         frames: frameCountStr || '',
-                        details: '鍘嗗彶璁板綍涓嶅寘鍚缁嗗垎鏋愭暟鎹€?,
+                        details: '历史记录不包含详细分析数据',
                         attentionMapPath: attentionPath || ''
                     };
-                    try {
-                        sessionStorage.setItem('lastDetectionResult', JSON.stringify(historyResult));
-                        sessionStorage.setItem('lastDetectionFilename', filename || '');
-                        sessionStorage.setItem('lastDetectionFilepath', filepath || '');
-                        sessionStorage.setItem('lastDetectionMeta', JSON.stringify({
-                            detectEndTime: detectTimeStr || '',
-                            detectStartTime: '',
-                            detectDurationMs: null,
-                            queueDurationMs: null
-                        }));
-                        console.log('[鍘嗗彶璁板綍] 宸蹭繚瀛樼粨鏋滃埌 sessionStorage');
-                    } catch (e) {
-                        console.warn('[鍘嗗彶璁板綍] 淇濆瓨缁撴灉鍒?sessionStorage 澶辫触:', e);
-                    }
-                    
-                    // 鏋勫缓 URL锛屼笉閫氳繃 URL 浼犻€?result锛屼娇鐢?sessionStorage
+
+                    sessionStorage.setItem('lastDetectionResult', JSON.stringify(historyResult));
+                    sessionStorage.setItem('lastDetectionFilename', filename || '');
+                    sessionStorage.setItem('lastDetectionFilepath', filepath || '');
+                    sessionStorage.setItem('lastDetectionMeta', JSON.stringify({
+                        detectEndTime: detectTimeStr || ''
+                    }));
+
                     let url = '/result?filename=' + encodeURIComponent(filename) + 
                               '&filepath=' + encodeURIComponent(filepath || '');
-                    console.log('[鍘嗗彶璁板綍] 璺宠浆 URL:', url);
-                    console.log('========================================');
-                    
+
                     window.location.href = url;
                 });
             });
-            
-            // 娣诲姞鍒犻櫎鎸夐挳鐨勭偣鍑讳簨浠?            const deleteButtons = document.querySelectorAll('.delete-btn');
-            console.log('[鍘嗗彶璁板綍] 鎵惧埌', deleteButtons.length, '涓垹闄ゆ寜閽?);
+
+            const deleteButtons = document.querySelectorAll('.delete-btn');
+            console.log('[历史记录] 找到', deleteButtons.length, '个删除按钮');
+
             deleteButtons.forEach(function(button) {
                 button.addEventListener('click', function(e) {
                     e.preventDefault();
                     const id = this.getAttribute('data-record-id');
-                    console.log('[鍘嗗彶璁板綍] 鍒犻櫎璁板綍 ID:', id);
                     deleteRecord(id);
                 });
             });
         });
-        
+
         function deleteRecord(id) {
-            if (!confirm('纭畾瑕佸垹闄よ繖鏉℃娴嬭褰曞悧锛熻繖灏嗗悓鏃跺垹闄ゆ墍鏈夌浉鍏虫枃浠讹紙瑙嗛銆佸抚銆佺儹鍔涘浘锛夈€?)) {
+            if (!confirm('确定要删除这条检测记录吗？这将同时删除所有相关文件（视频、帧、热力图）？')) {
                 return;
             }
 
@@ -174,22 +150,17 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    // 鏄剧ず鎴愬姛鎻愮ず
-                    alert('璁板綍宸插垹闄?);
-                    // 鑷姩鍒锋柊椤甸潰
+                    alert('记录已删除');
                     location.reload();
                 } else {
-                    alert('鍒犻櫎澶辫触锛? + data.message);
+                    alert('删除失败：' + data.message);
                 }
             })
             .catch(error => {
-                console.error('鍒犻櫎澶辫触:', error);
-                alert('缃戠粶閿欒锛屽垹闄ゅけ璐?);
+                console.error('删除失败:', error);
+                alert('网络错误，删除失败');
             });
         }
     </script>
 </body>
 </html>
-
-
-
