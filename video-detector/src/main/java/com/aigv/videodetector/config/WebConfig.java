@@ -23,5 +23,9 @@ public class WebConfig implements WebMvcConfigurer {
         // 默认静态资源
         registry.addResourceHandler("/static/**")
                 .addResourceLocations("classpath:/static/");
+        
+        // 处理 favicon.ico 请求，避免 NoResourceFoundException
+        registry.addResourceHandler("/favicon.ico")
+                .addResourceLocations("classpath:/static/");
     }
 }
