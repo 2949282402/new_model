@@ -119,8 +119,10 @@
             fileInput.value = '';
             fileInfo.classList.remove('show');
             uploadPlaceholder.style.display = '';
+            uploadVideo.onerror = null;
             uploadVideo.style.display = 'none';
             uploadVideo.src = '';
+            alertBox.className = 'alert';
         });
 
         fileInput.addEventListener('change', (e) => {
@@ -129,17 +131,41 @@
             handleFile(file);
         });
 
-        function handleFile(file) {
+        async function handleFile(file) {
             selectedFile = file;
             fileName.textContent = '文件名：' + file.name;
             fileSize.textContent = '大小：' + formatSize(file.size);
             fileInfo.classList.add('show');
 
-            // 显示视频预览
-            const url = URL.createObjectURL(file);
-            uploadVideo.src = url;
+            // 先用 blob URL 尝试本地播放
+            uploadVideo.onerror = null;
+            uploadVideo.src = URL.createObjectURL(file);
             uploadVideo.style.display = 'block';
             uploadPlaceholder.style.display = 'none';
+
+            // 若浏览器无法解码，则请求后端 FFmpeg 转码预览
+            uploadVideo.onerror = async () => {
+                uploadVideo.onerror = null;
+                showAlert('当前格式浏览器不支持预览，正在转码请稍候...', 'info');
+                const fd = new FormData();
+                fd.append('video', file);
+                try {
+                    const res = await fetch('/preview', { method: 'POST', body: fd });
+                    const data = await res.json();
+                    if (data.success) {
+                        uploadVideo.src = data.previewUrl;
+                        alertBox.className = 'alert'; // 隐藏提示
+                    } else {
+                        showAlert('预览转码失败：' + data.message, 'error');
+                        uploadVideo.style.display = 'none';
+                        uploadPlaceholder.style.display = '';
+                    }
+                } catch (err) {
+                    showAlert('转码请求失败：' + err.message, 'error');
+                    uploadVideo.style.display = 'none';
+                    uploadPlaceholder.style.display = '';
+                }
+            };
         }
 
         function formatSize(size) {
