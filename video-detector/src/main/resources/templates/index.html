@@ -19,7 +19,7 @@
             <h4>提示</h4>
             <p>
                 本系统采用AI技术进行视频真伪鉴别，检测结果仅供参考。
-                我们不对检测结果的准确性做出任何保证，建议结合其他手段综合判断。
+                不对检测结果的准确性做出任何保证，建议结合其他手段综合判断。
                 请理性看待检测结论，谨慎辨别视频内容。
             </p>
         </div>
@@ -32,7 +32,7 @@
                     <div class="upload-area" id="uploadArea">
                         <div id="uploadPlaceholder">
                             <div class="upload-text">点击选择视频或拖拽到此处</div>
-                            <div class="upload-hint">支持格式：MP4, AVI, MOV, MKV, WMV, FLV（最大100MB）</div>
+                            <div class="upload-hint">支持格式：MP4,AVI,MOV,MKV,WMV,FLV（最大500MB）</div>
                         </div>
                         <video id="uploadVideo" muted playsinline style="display: none;"></video>
                         <input type="file" id="fileInput" name="video" accept="video/*">
@@ -43,7 +43,7 @@
                     <div class="field-row">
                         <label>热力图数量</label>
                         <input type="number" id="attnTopK" value="5">
-                        <div class="field-hint">建议 3-10</div>
+                        <div class="field-hint">建议3-10</div>
                     </div>
 
                     <div class="field-row">
@@ -55,6 +55,7 @@
                         <label>抽帧间隔</label>
                         <input type="number" id="frameInterval" value="0">
                         <div class="field-hint">0表示全部帧</div>
+                        <div class="field-hint">x表示帧间隔，提取x,x+1,x+2,x+4</div>
                     </div>
 
                     <button type="submit" class="btn" id="submitBtn">开始检测</button>
@@ -81,17 +82,65 @@
         const uploadForm = document.getElementById('uploadForm');
         const submitBtn = document.getElementById('submitBtn');
         const alertBox = document.getElementById('alert');
+        const uploadArea = document.getElementById('uploadArea');
+        const uploadPlaceholder = document.getElementById('uploadPlaceholder');
+        const uploadVideo = document.getElementById('uploadVideo');
+        const fileInfo = document.getElementById('fileInfo');
+        const clearFileBtn = document.getElementById('clearFileBtn');
 
         let selectedFile = null;
+
+        // 点击上传区域触发文件选择
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        // 拖拽支持
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) handleFile(file);
+        });
+
+        // 清除文件
+        clearFileBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            selectedFile = null;
+            fileInput.value = '';
+            fileInfo.classList.remove('show');
+            uploadPlaceholder.style.display = '';
+            uploadVideo.style.display = 'none';
+            uploadVideo.src = '';
+        });
 
         fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
+            handleFile(file);
+        });
 
+        function handleFile(file) {
             selectedFile = file;
             fileName.textContent = '文件名：' + file.name;
             fileSize.textContent = '大小：' + formatSize(file.size);
-        });
+            fileInfo.classList.add('show');
+
+            // 显示视频预览
+            const url = URL.createObjectURL(file);
+            uploadVideo.src = url;
+            uploadVideo.style.display = 'block';
+            uploadPlaceholder.style.display = 'none';
+        }
 
         function formatSize(size) {
             if (size < 1024) return size + ' B';
