@@ -1,9 +1,12 @@
 package com.aigv.videodetector.config;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -73,6 +76,15 @@ public class GlobalExceptionHandler {
         response.put("success", false);
         response.put("message", "上传文件超出最大限制（500MB）");
         return response;
+    }
+
+    /**
+     * 忽略浏览器自动请求的静态资源（如 Chrome DevTools 探测路径）
+     */
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    @ExceptionHandler(NoResourceFoundException.class)
+    public void handleNoResourceFound(NoResourceFoundException e) {
+        log.debug("静态资源未找到（已忽略）：{}", e.getResourcePath());
     }
 
     /**

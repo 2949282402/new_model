@@ -83,8 +83,13 @@
                 <div class="details-title">Attention热力图</div>
                 <div class="attention-content">
                     <img id="attentionImage" class="attention-image" src="" alt="Attention热力图"
-                         style="max-width: 100%; border-radius: 6px; border: 1px solid #e0e0e0;" />
+                         style="max-width: 100%; border-radius: 6px; border: 1px solid #e0e0e0;" title="点击查看大图" />
                 </div>
+            </div>
+
+            <div class="image-modal" id="imageModal">
+                <button class="close-btn" id="modalCloseBtn">关闭</button>
+                <img id="modalImage" src="" alt="热力图大图" />
             </div>
 
             <div class="details-section">
@@ -139,6 +144,7 @@
 
             const badge = document.getElementById('resultBadge');
             badge.textContent = isReal ? '真实视频' : 'AI生成视频';
+            badge.classList.add(isReal ? 'badge-real' : 'badge-ai');
 
             document.getElementById('frameCount').textContent = resultData.frames || '-';
 
@@ -149,6 +155,28 @@
             }
 
             document.getElementById('detailsContent').textContent = resultData.details || '无详细信息';
+
+            // 显示热力图
+            const attentionUrl = resultData.attentionMapUrl || '';
+            if (attentionUrl) {
+                const attentionImage = document.getElementById('attentionImage');
+                attentionImage.src = attentionUrl;
+                document.getElementById('attentionSection').style.display = '';
+
+                // 点击放大
+                const modal = document.getElementById('imageModal');
+                const modalImage = document.getElementById('modalImage');
+                attentionImage.addEventListener('click', () => {
+                    modalImage.src = attentionUrl;
+                    modal.classList.add('show');
+                });
+                document.getElementById('modalCloseBtn').addEventListener('click', () => {
+                    modal.classList.remove('show');
+                });
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) modal.classList.remove('show');
+                });
+            }
 
         } else {
             document.getElementById('resultTitle').textContent = '检测失败';

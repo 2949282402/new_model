@@ -179,6 +179,21 @@
             alertBox.className = 'alert show ' + type;
         }
 
+        const loadingDiv = document.getElementById('loading');
+        const progressInfo = document.getElementById('progressInfo');
+
+        function setLoading(on) {
+            if (on) {
+                loadingDiv.classList.add('show');
+                submitBtn.disabled = true;
+                uploadArea.classList.add('disabled');
+            } else {
+                loadingDiv.classList.remove('show');
+                submitBtn.disabled = false;
+                uploadArea.classList.remove('disabled');
+            }
+        }
+
         uploadForm.addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -189,31 +204,71 @@
 
             const formData = new FormData();
             formData.append('video', selectedFile);
+            formData.append('attnTopK', document.getElementById('attnTopK').value);
+            formData.append('threshold', document.getElementById('threshold').value);
+            formData.append('everyN', document.getElementById('frameInterval').value);
 
-            submitBtn.disabled = true;
+            setLoading(true);
+            progressInfo.textContent = '上传中...';
 
             try {
-                const res = await fetch('/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-
+                const res = await fetch('/upload', { method: 'POST', body: formData });
                 const data = await res.json();
 
-                if (data.success) {
-                    showAlert('检测完成，跳转中...', 'success');
-
-                    sessionStorage.setItem('lastDetectionResult', JSON.stringify(data.result));
-                    sessionStorage.setItem('lastDetectionFilename', data.filename);
-
-                    window.location.href = '/result?filename=' + encodeURIComponent(data.filename);
-                } else {
-                    showAlert('检测失败：' + data.message, 'error');
-                    submitBtn.disabled = false;
+                if (!data.success) {
+                    showAlert('上传失败：' + data.message, 'error');
+                    setLoading(false);
+                    return;
                 }
+
+                progressInfo.textContent = '等待检测队列...';
+
+                // 通过 SSE 等待异步检测结果
+                const evtSource = new EventSource('/progress/' + data.taskId);
+
+                evtSource.onmessage = (event) => {
+                    const msg = JSON.parse(event.data);
+
+                    if (msg.type === 'queued') {
+                        progressInfo.textContent = '排队中，前方还有 ' + msg.position + ' 个任务...';
+                    } else if (msg.type === 'start') {
+                        progressInfo.textContent = '正在分析...';
+                    } else if (msg.type === 'progress') {
+                        if (msg.frames && msg.total) {
+                            progressInfo.textContent = '已处理 ' + msg.frames + ' / ' + msg.total + ' 帧';
+                        } else {
+                            progressInfo.textContent = msg.message || '处理中...';
+                        }
+                    } else if (msg.type === 'complete') {
+                        evtSource.close();
+                        const resultObj = JSON.parse(msg.result);
+                        if (msg.attentionMapUrl) {
+                            resultObj.attentionMapUrl = msg.attentionMapUrl;
+                        }
+                        sessionStorage.setItem('lastDetectionResult', JSON.stringify(resultObj));
+                        sessionStorage.setItem('lastDetectionFilename', msg.filename || data.filename);
+                        sessionStorage.setItem('lastDetectionMeta', JSON.stringify({
+                            detectEndTime: msg.detectEndTime,
+                            queueDurationMs: msg.queueDurationMs,
+                            detectDurationMs: msg.detectDurationMs
+                        }));
+                        window.location.href = '/result?filename=' + encodeURIComponent(msg.filename || data.filename);
+                    } else if (msg.type === 'error') {
+                        evtSource.close();
+                        showAlert('检测失败：' + msg.message, 'error');
+                        setLoading(false);
+                    }
+                };
+
+                evtSource.onerror = () => {
+                    evtSource.close();
+                    showAlert('连接中断，请刷新页面重试', 'error');
+                    setLoading(false);
+                };
+
             } catch (err) {
                 showAlert('网络错误：' + err.message, 'error');
-                submitBtn.disabled = false;
+                setLoading(false);
             }
         });
     </script>

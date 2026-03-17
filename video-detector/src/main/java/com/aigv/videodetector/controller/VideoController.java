@@ -654,6 +654,13 @@ public class VideoController {
             completeData.put("result", result);
             completeData.put("filename", task.originalFilename);
             completeData.put("filepath", task.outputDir);
+            if (!attentionMapPath.isEmpty()) {
+                try {
+                    completeData.put("attentionMapUrl", toUploadUrl(Paths.get(attentionMapPath)));
+                } catch (Exception e) {
+                    log.warn("无法转换热力图路径为URL: {}", attentionMapPath);
+                }
+            }
             long queueDurationMs = Math.max(0L, task.startTimeMs - task.enqueueTimeMs);
             long detectDurationMs = Math.max(0L, task.endTimeMs - task.startTimeMs);
             completeData.put("detectStartTime", formatTime(task.startTimeMs));
