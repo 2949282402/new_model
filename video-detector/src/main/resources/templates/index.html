@@ -89,6 +89,7 @@
         const clearFileBtn = document.getElementById('clearFileBtn');
 
         let selectedFile = null;
+        let currentObjectUrl = null;
 
         // 点击上传区域触发文件选择
         uploadArea.addEventListener('click', () => {
@@ -119,7 +120,7 @@
             fileInput.value = '';
             fileInfo.classList.remove('show');
             uploadPlaceholder.style.display = '';
-            uploadVideo.onerror = null;
+            resetVideoPreview();
             uploadVideo.style.display = 'none';
             uploadVideo.src = '';
             alertBox.className = 'alert';
@@ -131,6 +132,52 @@
             handleFile(file);
         });
 
+        function resetVideoPreview() {
+            uploadVideo.onerror = null;
+            uploadVideo.pause();
+            if (currentObjectUrl) {
+                URL.revokeObjectURL(currentObjectUrl);
+                currentObjectUrl = null;
+            }
+        }
+
+        async function requestServerPreview(file, objectUrl) {
+            uploadVideo.onerror = null;
+            if (currentObjectUrl === objectUrl) {
+                URL.revokeObjectURL(objectUrl);
+                currentObjectUrl = null;
+            }
+
+            showAlert('当前格式浏览器不支持预览，正在转码请稍候...', 'info');
+            const fd = new FormData();
+            fd.append('video', file);
+
+            try {
+                const res = await fetch('/preview', { method: 'POST', body: fd });
+                const data = await res.json();
+                if (selectedFile !== file) {
+                    return;
+                }
+                if (data.success) {
+                    uploadVideo.src = data.previewUrl;
+                    uploadVideo.load();
+                    await uploadVideo.play().catch(() => {});
+                    alertBox.className = 'alert';
+                } else {
+                    showAlert('预览转码失败：' + data.message, 'error');
+                    uploadVideo.style.display = 'none';
+                    uploadPlaceholder.style.display = '';
+                }
+            } catch (err) {
+                if (selectedFile !== file) {
+                    return;
+                }
+                showAlert('转码请求失败：' + err.message, 'error');
+                uploadVideo.style.display = 'none';
+                uploadPlaceholder.style.display = '';
+            }
+        }
+
         async function handleFile(file) {
             selectedFile = file;
             fileName.textContent = '文件名：' + file.name;
@@ -138,37 +185,38 @@
             fileInfo.classList.add('show');
 
             // 先用 blob URL 尝试本地播放
-            uploadVideo.onerror = null;
+            resetVideoPreview();
             uploadVideo.loop = true;
-            uploadVideo.src = URL.createObjectURL(file);
             uploadVideo.style.display = 'block';
             uploadPlaceholder.style.display = 'none';
-            uploadVideo.play().catch(() => {});
+            const objectUrl = URL.createObjectURL(file);
+            currentObjectUrl = objectUrl;
 
-            // 若浏览器无法解码，则请求后端 FFmpeg 转码预览
-            uploadVideo.onerror = async () => {
-                uploadVideo.onerror = null;
-                showAlert('当前格式浏览器不支持预览，正在转码请稍候...', 'info');
-                const fd = new FormData();
-                fd.append('video', file);
-                try {
-                    const res = await fetch('/preview', { method: 'POST', body: fd });
-                    const data = await res.json();
-                    if (data.success) {
-                        uploadVideo.src = data.previewUrl;
-                        uploadVideo.play().catch(() => {});
-                        alertBox.className = 'alert'; // 隐藏提示
-                    } else {
-                        showAlert('预览转码失败：' + data.message, 'error');
-                        uploadVideo.style.display = 'none';
-                        uploadPlaceholder.style.display = '';
-                    }
-                } catch (err) {
-                    showAlert('转码请求失败：' + err.message, 'error');
-                    uploadVideo.style.display = 'none';
-                    uploadPlaceholder.style.display = '';
+            let previewRequested = false;
+            const fallbackToServerPreview = async () => {
+                if (previewRequested || selectedFile !== file) {
+                    return;
                 }
+                previewRequested = true;
+                await requestServerPreview(file, objectUrl);
             };
+
+            // 先绑定失败回调，避免 src 设置后立即报错时漏掉事件
+            uploadVideo.onerror = () => {
+                fallbackToServerPreview();
+            };
+            uploadVideo.src = objectUrl;
+            uploadVideo.load();
+
+            try {
+                await uploadVideo.play();
+                alertBox.className = 'alert';
+            } catch (err) {
+                if (selectedFile !== file) {
+                    return;
+                }
+                await fallbackToServerPreview();
+            }
         }
 
         function formatSize(size) {
