@@ -103,6 +103,15 @@
             display: none;
         }
 
+        #uploadVideo {
+            height: 260px;
+            width: auto;
+            max-width: 100%;
+            object-fit: contain;
+            display: block;
+            margin: 0 auto;
+        }
+
         .file-info {
             background: #f7f7f7;
             padding: 12px;
