@@ -24,7 +24,7 @@
             </p>
         </div>
 
-        <div id="alert" class="alert"></div>
+        <div id="alertMsg" class="alert"></div>
 
         <form id="uploadForm" enctype="multipart/form-data">
             <div class="layout">
@@ -81,7 +81,7 @@
         const fileSize = document.getElementById('fileSize');
         const uploadForm = document.getElementById('uploadForm');
         const submitBtn = document.getElementById('submitBtn');
-        const alertBox = document.getElementById('alert');
+        const alertBox = document.getElementById('alertMsg');
         const uploadArea = document.getElementById('uploadArea');
         const uploadPlaceholder = document.getElementById('uploadPlaceholder');
         const uploadVideo = document.getElementById('uploadVideo');
@@ -179,7 +179,7 @@
 
         function showAlert(msg, type) {
             alertBox.textContent = msg;
-            alertBox.className = 'alert show ' + type;
+            alertBox.className = 'alert show alert-' + type;
         }
 
         const loadingDiv = document.getElementById('loading');

@@ -267,11 +267,11 @@
     display: block;
 }
 
-.alert + #uploadForm {
+#alertMsg + #uploadForm {
     margin-top: 16px;
 }
 
-.alert.show + #uploadForm {
+#alertMsg.show + #uploadForm {
     margin-top: 0;
 }
 

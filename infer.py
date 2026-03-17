@@ -177,10 +177,17 @@ def load_model(checkpoint_path: str, device: torch.device):
             val = str(val)
         model_args[key] = val
 
-    for path_key in ("flowformer_repo", "flowformer_ckpt"):
+    path_defaults = {
+        "flowformer_repo": SCRIPT_DIR / "FlowFormerPlusPlus-main",
+        "flowformer_ckpt": SCRIPT_DIR / "checkpoints" / "things.pth",
+    }
+    for path_key, default_path in path_defaults.items():
         p = Path(model_args[path_key])
         if not p.is_absolute():
-            model_args[path_key] = str((SCRIPT_DIR / p).resolve())
+            p = (SCRIPT_DIR / p).resolve()
+        if not p.exists():
+            p = default_path.resolve()
+        model_args[path_key] = str(p)
 
     model = Enhanced_STF_Detector(
         feature_dim=model_args["feature_dim"],
