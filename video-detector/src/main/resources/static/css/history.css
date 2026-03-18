@@ -1,150 +1,255 @@
-﻿* {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+:root {
+    --bg: #efefef;
+    --surface: #ffffff;
+    --surface-muted: #f7f7f7;
+    --surface-soft: #fbfbfb;
+    --border: #d9d9d9;
+    --border-strong: #bcbcbc;
+    --text: #111111;
+    --text-muted: #5f5f5f;
+    --text-soft: #7a7a7a;
+    --accent: #1c1c1c;
+    --accent-hover: #303030;
+    --shadow: 0 18px 40px rgba(0, 0, 0, 0.06);
+    --radius-lg: 16px;
+    --radius-md: 12px;
+    --radius-sm: 10px;
+}
 
-        body {
-            font-family: 'Microsoft YaHei', Arial, sans-serif;
-            background: #f5f5f5;
-            color: #111;
-            min-height: 100vh;
-            padding: 24px;
-        }
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
 
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            background: #fff;
-            border-radius: 8px;
-            padding: 32px;
-            border: 1px solid #ddd;
-        }
+body {
+    min-height: 100vh;
+    padding: 28px 20px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Microsoft YaHei", Arial, sans-serif;
+}
 
-        h1 {
-            text-align: center;
-            color: #111;
-            margin-bottom: 8px;
-            font-size: 24px;
-        }
+.container {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 34px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+}
 
-        .subtitle {
-            text-align: center;
-            color: #666;
-            margin-bottom: 24px;
-            font-size: 14px;
-        }
+h1 {
+    font-size: 30px;
+    font-weight: 700;
+    text-align: center;
+    color: var(--text);
+}
 
-        .btn {
-            display: inline-block;
-            padding: 10px 18px;
-            background: #111;
-            color: #fff;
-            text-decoration: none;
-            border-radius: 6px;
-            border: 1px solid #111;
-            cursor: pointer;
-            font-size: 14px;
-            transition: background 0.2s ease, border-color 0.2s ease;
-        }
+.subtitle {
+    margin-top: 10px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1.7;
+}
 
-        .btn:hover {
-            background: #333;
-            border-color: #333;
-        }
+.top-nav {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 24px;
+}
 
-        .btn-danger,
-        .btn-primary {
-            background: #111;
-            border-color: #111;
-        }
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 11px 18px;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    background: var(--accent);
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
 
-        .record-list {
-            margin-top: 30px;
-        }
+.btn:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+}
 
-        .record-item {
-            background: #fafafa;
-            border-radius: 6px;
-            padding: 18px;
-            margin-bottom: 16px;
-            border: 1px solid #e5e5e5;
-            border-left: 4px solid #999;
-            transition: background 0.2s ease;
-        }
+.record-list {
+    margin-top: 28px;
+}
 
-        .record-item:hover {
-            background: #f5f5f5;
-        }
+.record-item {
+    padding: 20px 22px;
+    margin-bottom: 18px;
+    background: var(--surface-soft);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    transition: border-color 0.18s ease, background 0.18s ease;
+}
 
-        .record-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
+.record-item:hover {
+    background: var(--surface-muted);
+    border-color: var(--border-strong);
+}
 
-        .record-title {
-            font-size: 16px;
-            font-weight: 600;
-            color: #111;
-        }
+.record-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+}
 
-        .record-time {
-            font-size: 12px;
-            color: #777;
-        }
+.record-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text);
+}
 
-        .record-info {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 10px;
-            margin-bottom: 15px;
-        }
+.filename {
+    word-break: break-all;
+}
 
-        .info-item {
-            font-size: 14px;
-            color: #666;
-        }
+.record-time {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-soft);
+    line-height: 1.6;
+}
 
-        .info-label {
-            font-weight: 600;
-            color: #333;
-        }
+.record-info {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
 
-        .badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: bold;
-        }
+.info-item {
+    padding: 13px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-muted);
+}
 
-        .badge-real {
-            background: #e6e6e6;
-            color: #111;
-        }
+.info-label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-soft);
+}
 
-        .badge-ai {
-            background: #cfcfcf;
-            color: #111;
-        }
+.badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+    background: #ececec;
+}
 
-        .record-actions {
-            display: flex;
-            gap: 10px;
-        }
+.badge-real {
+    background: #f0f0f0;
+}
 
-        .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            color: #777;
-        }
+.badge-ai {
+    background: #dbdbdb;
+}
 
-        .top-nav {
-            margin-bottom: 30px;
-            display: flex;
-            justify-content: center;
-            gap: 15px;
-        }
+.record-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
 
+.view-btn {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+}
+
+.view-btn:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+}
+
+.delete-btn {
+    background: #ebebeb;
+    border-color: #c9c9c9;
+    color: var(--text);
+}
+
+.delete-btn:hover {
+    background: #dddddd;
+    border-color: #b3b3b3;
+}
+
+.empty-state {
+    padding: 60px 20px;
+    text-align: center;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-soft);
+    color: var(--text-soft);
+}
+
+.empty-state h3 {
+    font-size: 22px;
+    color: var(--text);
+}
+
+@media (max-width: 900px) {
+    body {
+        padding: 18px 14px;
+    }
+
+    .container {
+        padding: 24px 18px;
+    }
+
+    .record-info {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    h1 {
+        font-size: 24px;
+    }
+
+    .record-header {
+        flex-direction: column;
+    }
+
+    .record-info {
+        grid-template-columns: 1fr;
+    }
+
+    .record-actions {
+        flex-direction: column;
+    }
+
+    .record-actions .btn {
+        width: 100%;
+    }
+}

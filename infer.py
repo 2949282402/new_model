@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_attn", action="store_true", default=False,
                         help="同时生成注意力热力图 (仅 cross_attention 模式有效)")
     parser.add_argument("--attn_top_k", type=int, default=5,
-                        help="绘制概率最高的连续 K 帧 (默认: 5)")
+                        help="绘制概率最高的 K 帧 (默认: 5)")
     parser.add_argument("--attn_alpha", type=float, default=0.5,
                         help="热力图叠加透明度 (默认: 0.1")
     parser.add_argument("--attn_output", type=str, default="",
@@ -97,7 +97,7 @@ def extract_frames_from_video(video_path: Path, every_n: int = 1) -> Path:
         print(f"[错误] 视频中未提取到任何帧: {video_path}")
         sys.exit(1)
 
-    print(f"[抽帧] 从视频中提取了 {saved} 帧 (共 {idx} 帧, 间隔 {every_n})")
+    print(f"[抽帧] 从视频中提取了 {saved} 帧 (共 {idx} 帧, 保留全部原始帧用于后续按间隔分析)")
     return tmp_dir
 
 
@@ -240,7 +240,17 @@ def infer_video(
     frame_probs: List[float] = []
     used_frames: List[Path] = []
     stride = max(1, int(sample_stride))
-    base_indices = list(range(0, n, stride))
+    if use_temporal:
+        required_last_offset = max(motion_offsets)
+        if n <= required_last_offset:
+            print(f"[错误] 视频有效帧数不足: 当前仅 {n} 帧，时序检测至少需要 {required_last_offset + 1} 帧")
+            sys.exit(1)
+        base_indices = list(range(0, n - required_last_offset, stride))
+        if not base_indices:
+            print(f"[错误] 当前抽帧间隔 {stride} 过大，无法构造满足 x,x+1,x+2,x+4 的有效帧组")
+            sys.exit(1)
+    else:
+        base_indices = list(range(0, n, stride))
 
     with torch.no_grad():
         for start in range(0, len(base_indices), batch_size):
@@ -262,7 +272,7 @@ def infer_video(
                 for off in motion_offsets:
                     x2_list = []
                     for i in idx_list:
-                        j = 0 if n == 1 else min(n - 1, i + off)
+                        j = i + off
                         with Image.open(frames[j]) as img2:
                             img2 = img2.convert("RGB")
                         _, x2 = preprocess_pair(img2, img2, image_size)
@@ -277,7 +287,7 @@ def infer_video(
             frame_probs.extend([float(p) for p in probs])
 
             done = min(start + batch_size, len(base_indices))
-            print(f"\r[推理] {done}/{len(base_indices)} 帧", end="", flush=True)
+            print(f"[推理] {done}/{len(base_indices)} 帧", flush=True)
 
     print()
     video_prob = aggregate_hybrid_topk_mean(frame_probs)
@@ -286,19 +296,15 @@ def infer_video(
 
 # --------------- 注意力热力图 ---------------
 
-def _find_top_consecutive(probs: List[float], top_k: int) -> List[int]:
-    """找到概率最高帧为中心的 top_k 个连续帧索引。"""
-    n = len(probs)
-    if n <= top_k:
-        return list(range(n))
-    peak_idx = int(np.argmax(probs))
-    half = top_k // 2
-    start = max(0, peak_idx - half)
-    end = start + top_k
-    if end > n:
-        end = n
-        start = max(0, end - top_k)
-    return list(range(start, end))
+def _find_top_probability_indices(probs: List[float], top_k: int) -> List[int]:
+    """Select the globally highest-probability frame indices in descending probability order."""
+    if not probs:
+        return []
+
+    limit = max(1, int(top_k))
+    indexed_probs = list(enumerate(probs))
+    indexed_probs.sort(key=lambda item: item[1], reverse=True)
+    return [idx for idx, _ in indexed_probs[:limit]]
 
 
 def _extract_attention_single(
@@ -374,11 +380,12 @@ def generate_attention_maps(
     output_dir.mkdir(parents=True, exist_ok=True)
     n = len(frames)
 
-    # 选出概率最高的 top_k 个连续帧
-    top_indices = _find_top_consecutive(frame_probs, top_k)
+    # 选出全局概率最高的 top_k 个帧
+    top_indices = _find_top_probability_indices(frame_probs, top_k)
     k = len(top_indices)
+    ranked_probs = [frame_probs[idx] for idx in top_indices]
 
-    print(f"[热力图] 提取 {k} 帧注意力权重 (帧索引: {top_indices})...")
+    print(f"[热力图] 提取全局概率最高的 {k} 帧注意力权重 (帧索引: {top_indices}, 概率: {['%.4f' % p for p in ranked_probs]})...")
 
     originals, attn_maps, overlays, drawn_probs, orig_indices = [], [], [], [], []
     for ti in top_indices:
@@ -394,13 +401,13 @@ def generate_attention_maps(
         img_m_t = TF.to_tensor(TF.resize(img_m_pil, [image_size, image_size]))
         img_motion_2 = img_m_t.unsqueeze(0).to(device)
 
-        attn_map, prob = _extract_attention_single(model, img_spatial, img_motion_2)
+        attn_map, _ = _extract_attention_single(model, img_spatial, img_motion_2)
         overlay = _make_overlay(original_np, attn_map, alpha)
 
         originals.append(original_np)
         attn_maps.append(attn_map)
         overlays.append(overlay)
-        drawn_probs.append(prob)
+        drawn_probs.append(frame_probs[ti])
         orig_indices.append(ti)
 
     # 三行合并大图
@@ -482,6 +489,11 @@ def main():
     model, model_args = load_model(args.checkpoint, device)
 
     sample_stride = max(1, int(args.every_n)) if args.every_n and args.every_n > 0 else 1
+    if args.every_n is not None:
+        if int(args.every_n) <= 0:
+            print("[分析设置] 抽帧间隔输入为 0, 当前按全部基准帧进行分析", flush=True)
+        else:
+            print(f"[分析设置] 当前按抽帧间隔 {sample_stride} 选择基准帧", flush=True)
     video_prob, frame_probs, used_frames = infer_video(
         model=model,
         model_args=model_args,

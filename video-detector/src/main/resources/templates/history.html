@@ -9,40 +9,59 @@
 <body>
     <div class="container">
         <div class="top-nav">
-            <a href="/" class="btn btn-primary">返回首页</a>
+            <a href="/" class="btn">返回首页</a>
         </div>
 
         <h1>历史检测记录</h1>
-        <p class="subtitle">查看和管理您的所有检测记录</p>
+        <p class="subtitle">查看和管理全部检测记录</p>
 
         <div class="record-list" th:if="${records != null and !records.isEmpty()}">
             <div class="record-item" th:each="record : ${records}">
                 <div class="record-header">
                     <div class="record-title">
-                        <span th:text="${record.originalFilename}">文件名</span>
-                        <span class="badge" 
-                              th:classappend="${record.result != null && record.result.contains('真实') ? 'badge-real' : 'badge-ai'}"
+                        <span class="filename" th:text="${record.originalFilename}">文件名</span>
+                        <span class="badge"
+                              th:classappend="${record.result != null and record.result.contains('真实') ? 'badge-real' : 'badge-ai'}"
                               th:text="${record.result != null ? #strings.replace(record.result, 'AI 生成', 'AI生成') : '检测中'}">结果</span>
                     </div>
-                    <div class="record-time" th:text="${#temporals.format(record.detectTime, 'yyyy-MM-dd HH:mm:ss')}">时间</div>
                 </div>
 
                 <div class="record-info">
                     <div class="info-item">
-                        <span class="info-label">概率：</span>
-                        <span th:if="${record.probability != null}" 
-                              th:text="${record.probability} + '%'">-</span>
+                        <span class="info-label">检测耗时</span>
+                        <span th:if="${record.detectDurationMs != null}"
+                              th:text="${#numbers.formatDecimal(record.detectDurationMs / 1000.0, 1, 1)} + ' 秒'">-</span>
+                        <span th:unless="${record.detectDurationMs != null}">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">概率</span>
+                        <span th:if="${record.probability != null}" th:text="${record.probability} + '%'">-</span>
                         <span th:unless="${record.probability != null}">-</span>
                     </div>
                     <div class="info-item">
-                        <span class="info-label">帧数：</span>
+                        <span class="info-label">分析帧数</span>
                         <span th:if="${record.frameCount != null}" th:text="${record.frameCount}">-</span>
                         <span th:unless="${record.frameCount != null}">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">热力图数量</span>
+                        <span th:if="${record.attnTopK != null}" th:text="${record.attnTopK}">-</span>
+                        <span th:unless="${record.attnTopK != null}">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">判定阈值</span>
+                        <span th:if="${record.threshold != null}" th:text="${#numbers.formatDecimal(record.threshold, 1, 2)}">-</span>
+                        <span th:unless="${record.threshold != null}">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">抽帧间隔</span>
+                        <span th:if="${record.everyN != null}" th:text="${record.everyN}">-</span>
+                        <span th:unless="${record.everyN != null}">-</span>
                     </div>
                 </div>
 
                 <div class="record-actions">
-                    <a href="#" 
+                    <a href="#"
                        class="btn view-btn"
                        th:data-id="${record.id}"
                        th:data-filepath="${record.filePath}"
@@ -50,10 +69,16 @@
                        th:data-result="${record.result}"
                        th:data-probability="${record.probability}"
                        th:data-framecount="${record.frameCount}"
+                       th:data-details="${record.details}"
+                       th:data-queueduration="${record.queueDurationMs}"
+                       th:data-detectduration="${record.detectDurationMs}"
+                       th:data-attntopk="${record.attnTopK}"
+                       th:data-threshold="${record.threshold}"
+                       th:data-everyn="${record.everyN}"
                        th:data-detecttime="${#temporals.format(record.detectTime, 'yyyy-MM-dd HH:mm:ss')}">
                         查看详情
                     </a>
-                    <button class="btn btn-danger delete-btn" th:data-record-id="${record.id}">
+                    <button type="button" class="btn delete-btn" th:data-record-id="${record.id}">
                         删除记录
                     </button>
                 </div>
@@ -62,104 +87,115 @@
 
         <div class="empty-state" th:if="${records == null or records.isEmpty()}">
             <h3>暂无检测记录</h3>
-            <p style="margin-top: 10px;">您还没有进行过任何视频检测</p>
-            <a href="/" class="btn btn-primary" style="margin-top: 20px;">开始检测</a>
+            <p style="margin-top: 10px;">当前还没有可查看的历史结果</p>
+            <a href="/" class="btn" style="margin-top: 20px;">开始检测</a>
         </div>
     </div>
 
     <script>
-        // 页面加载完成
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('[历史记录] 页面加载完成');
+        const DETECTION_SESSION_KEYS = [
+            'lastDetectionResult',
+            'lastDetectionFilename',
+            'lastDetectionFilepath',
+            'lastDetectionMeta',
+            'attentionMapPath'
+        ];
 
-            const viewButtons = document.querySelectorAll('.view-btn');
-            console.log('[历史记录] 找到', viewButtons.length, '个查看详情按钮');
-
-            viewButtons.forEach(function(button) {
-                button.addEventListener('click', function(e) {
-                    e.preventDefault();
-
-                    const id = this.getAttribute('data-id');
-                    const filepath = this.getAttribute('data-filepath');
-                    const attentionPath = this.getAttribute('data-attention');
-                    const resultStr = this.getAttribute('data-result');
-                    const probabilityStr = this.getAttribute('data-probability');
-                    const frameCountStr = this.getAttribute('data-framecount');
-                    const detectTimeStr = this.getAttribute('data-detecttime');
-
-                    console.log('[历史记录] 点击查看详情 ID:', id);
-
-                    sessionStorage.clear();
-
-                    if (attentionPath && attentionPath.trim().length > 0) {
-                        sessionStorage.setItem('attentionMapPath', attentionPath);
-                    }
-
-                    const recordItem = this.closest('.record-item');
-                    const filename = recordItem.querySelector('.record-title span').textContent;
-
-                    let normalizedProb = null;
-                    const rawProb = parseFloat(probabilityStr);
-                    if (Number.isFinite(rawProb)) {
-                        normalizedProb = rawProb / 100;
-                    }
-
-                    const historyResult = {
-                        success: true,
-                        probability: normalizedProb != null ? normalizedProb.toFixed(4) : '',
-                        result: resultStr || '',
-                        frames: frameCountStr || '',
-                        details: '历史记录不包含详细分析数据',
-                        attentionMapPath: attentionPath || ''
-                    };
-
-                    sessionStorage.setItem('lastDetectionResult', JSON.stringify(historyResult));
-                    sessionStorage.setItem('lastDetectionFilename', filename || '');
-                    sessionStorage.setItem('lastDetectionFilepath', filepath || '');
-                    sessionStorage.setItem('lastDetectionMeta', JSON.stringify({
-                        detectEndTime: detectTimeStr || ''
-                    }));
-
-                    let url = '/result?filename=' + encodeURIComponent(filename) + 
-                              '&filepath=' + encodeURIComponent(filepath || '');
-
-                    window.location.href = url;
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('.view-btn').forEach((button) => {
+                button.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    openRecordDetail(button);
                 });
             });
 
-            const deleteButtons = document.querySelectorAll('.delete-btn');
-            console.log('[历史记录] 找到', deleteButtons.length, '个删除按钮');
-
-            deleteButtons.forEach(function(button) {
-                button.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    const id = this.getAttribute('data-record-id');
-                    deleteRecord(id);
+            document.querySelectorAll('.delete-btn').forEach((button) => {
+                button.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    deleteRecord(button.getAttribute('data-record-id'));
                 });
             });
         });
 
+        function clearDetectionSession() {
+            DETECTION_SESSION_KEYS.forEach((key) => sessionStorage.removeItem(key));
+        }
+
+        function openRecordDetail(button) {
+            const filepath = button.getAttribute('data-filepath') || '';
+            const attentionPath = button.getAttribute('data-attention') || '';
+            const resultStr = button.getAttribute('data-result') || '';
+            const probabilityStr = button.getAttribute('data-probability') || '';
+            const frameCountStr = button.getAttribute('data-framecount') || '';
+            const detailsStr = button.getAttribute('data-details') || '';
+            const queueDurationStr = button.getAttribute('data-queueduration') || '';
+            const detectDurationStr = button.getAttribute('data-detectduration') || '';
+            const attnTopKStr = button.getAttribute('data-attntopk') || '';
+            const thresholdStr = button.getAttribute('data-threshold') || '';
+            const everyNStr = button.getAttribute('data-everyn') || '';
+            const detectTimeStr = button.getAttribute('data-detecttime') || '';
+
+            clearDetectionSession();
+
+            if (attentionPath.trim()) {
+                sessionStorage.setItem('attentionMapPath', attentionPath);
+            }
+
+            const recordItem = button.closest('.record-item');
+            const filenameElement = recordItem ? recordItem.querySelector('.filename') : null;
+            const filename = filenameElement ? filenameElement.textContent.trim() : '';
+
+            let normalizedProb = '';
+            const rawProb = parseFloat(probabilityStr);
+            if (Number.isFinite(rawProb)) {
+                normalizedProb = (rawProb / 100).toFixed(4);
+            }
+
+            const historyResult = {
+                success: true,
+                probability: normalizedProb,
+                result: resultStr,
+                frames: frameCountStr,
+                details: detailsStr || '无详细分析数据',
+                attentionMapPath: attentionPath
+            };
+
+            sessionStorage.setItem('lastDetectionResult', JSON.stringify(historyResult));
+            sessionStorage.setItem('lastDetectionFilename', filename);
+            sessionStorage.setItem('lastDetectionFilepath', filepath);
+            sessionStorage.setItem('lastDetectionMeta', JSON.stringify({
+                detectEndTime: detectTimeStr,
+                queueDurationMs: queueDurationStr ? Number(queueDurationStr) : null,
+                detectDurationMs: detectDurationStr ? Number(detectDurationStr) : null,
+                attnTopK: attnTopKStr ? Number(attnTopKStr) : null,
+                threshold: thresholdStr ? Number(thresholdStr) : null,
+                everyN: everyNStr ? Number(everyNStr) : null
+            }));
+
+            const url = '/result?filename=' + encodeURIComponent(filename) +
+                '&filepath=' + encodeURIComponent(filepath);
+            window.location.href = url;
+        }
+
         function deleteRecord(id) {
-            if (!confirm('确定要删除这条检测记录吗？这将同时删除所有相关文件（视频、帧、热力图）？')) {
+            if (!confirm('确定要删除这条检测记录吗？这会同时删除相关视频、热力图及中间文件。')) {
                 return;
             }
 
-            fetch('/delete/' + id, {
-                method: 'POST'
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    alert('记录已删除');
-                    location.reload();
-                } else {
+            fetch('/delete/' + id, { method: 'POST' })
+                .then((response) => response.json())
+                .then((data) => {
+                    if (data.success) {
+                        alert('记录已删除');
+                        window.location.reload();
+                        return;
+                    }
                     alert('删除失败：' + data.message);
-                }
-            })
-            .catch(error => {
-                console.error('删除失败:', error);
-                alert('网络错误，删除失败');
-            });
+                })
+                .catch((error) => {
+                    console.error('Delete failed:', error);
+                    alert('网络错误，删除失败');
+                });
         }
     </script>
 </body>

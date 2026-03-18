@@ -8,11 +8,15 @@
 </head>
 <body>
     <div class="container">
-        <h1>AI生成视频检测系统</h1>
-        <p class="subtitle">基于深度学习的人工智能视频真伪鉴别平台</p>
-        
-        <div style="text-align: center; margin-bottom: 20px;">
-            <a href="/history" class="btn">查看历史记录</a>
+        <div class="hero">
+            <div class="hero-copy">
+                <h1>AI生成视频检测系统</h1>
+                <p class="subtitle">基于深度学习的人工智能视频真伪鉴别平台</p>
+            </div>
+
+            <div class="hero-actions">
+                <a href="/history" class="btn btn-secondary btn-history">查看历史记录</a>
+            </div>
         </div>
 
         <div class="disclaimer" id="disclaimer">
@@ -24,13 +28,31 @@
             </p>
         </div>
 
-        <div id="alertMsg" class="alert"></div>
+        <div class="status-slot">
+            <div class="loading" id="loading">
+                <div class="loading-text">正在分析视频，请稍候...</div>
+                <div class="progress-container" id="progressContainer">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill" style="width: 0%;">0%</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="alertMsg" class="alert"></div>
+        </div>
 
         <form id="uploadForm" enctype="multipart/form-data">
             <div class="layout">
                 <div class="panel panel-left">
+                    <div class="panel-header">
+                        <div>
+                            <div class="panel-title">视频上传</div>
+                            <div class="panel-desc">支持点击选择与拖拽上传</div>
+                        </div>
+                    </div>
                     <div class="upload-area" id="uploadArea">
                         <div id="uploadPlaceholder">
+                            <div class="upload-icon" aria-hidden="true"></div>
                             <div class="upload-text">点击选择视频或拖拽到此处</div>
                             <div class="upload-hint">支持格式：MP4,AVI,MOV,MKV,WMV,FLV（最大500MB）</div>
                         </div>
@@ -39,23 +61,31 @@
                     </div>
                 </div>
 
-                <div class="panel">
+                <div class="panel panel-settings">
+                    <div class="panel-header">
+                        <div>
+                            <div class="panel-title">参数设置</div>
+                            <div class="panel-desc">设置热力图数量、阈值与抽帧间隔</div>
+                        </div>
+                    </div>
+
                     <div class="field-row">
                         <label>热力图数量</label>
-                        <input type="number" id="attnTopK" value="5">
+                        <input type="number" id="attnTopK" name="attnTopK" value="5" min="1">
                         <div class="field-hint">建议3-10</div>
                     </div>
 
                     <div class="field-row">
                         <label>判定阈值</label>
-                        <input type="number" id="threshold" value="0.10" step="0.01">
+                        <input type="number" id="threshold" name="threshold" value="0.10" step="0.01" min="0" max="1">
+                        <div class="field-hint">默认0.1</div>
                     </div>
 
                     <div class="field-row">
                         <label>抽帧间隔</label>
-                        <input type="number" id="frameInterval" value="0">
-                        <div class="field-hint">0表示全部帧</div>
-                        <div class="field-hint">x表示帧间隔，提取x,x+1,x+2,x+4</div>
+                        <input type="number" id="frameInterval" name="everyN" value="0" min="0">
+                        <div class="field-hint">0表示使用全部基准帧</div>
+                        <div class="field-hint">x表示按间隔x选择起始帧，每组使用 x, x+1, x+2, x+4</div>
                     </div>
 
                     <button type="submit" class="btn" id="submitBtn">开始检测</button>
@@ -63,16 +93,15 @@
             </div>
 
             <div class="file-info" id="fileInfo">
-                <div class="file-name" id="fileName"></div>
-                <div class="file-size" id="fileSize"></div>
-                <button type="button" id="clearFileBtn">清除文件</button>
+                <div class="file-info-row">
+                    <div class="file-info-content">
+                        <div class="file-name" id="fileName"></div>
+                        <div class="file-size" id="fileSize"></div>
+                    </div>
+                    <button type="button" id="clearFileBtn" class="btn btn-secondary btn-small">清除文件</button>
+                </div>
             </div>
         </form>
-
-        <div class="loading" id="loading">
-            <div>正在分析视频，请稍候...</div>
-            <div id="progressInfo">初始化中...</div>
-        </div>
     </div>
 
     <script>
@@ -87,9 +116,18 @@
         const uploadVideo = document.getElementById('uploadVideo');
         const fileInfo = document.getElementById('fileInfo');
         const clearFileBtn = document.getElementById('clearFileBtn');
+        const attnTopKInput = document.getElementById('attnTopK');
+        const thresholdInput = document.getElementById('threshold');
+        const frameIntervalInput = document.getElementById('frameInterval');
 
         let selectedFile = null;
         let currentObjectUrl = null;
+        let alertHideTimer = null;
+        let previewTranscoding = false;
+        let previewTranscodeCompleted = false;
+        let detectionStarted = false;
+        const MAX_FILE_SIZE = 500 * 1024 * 1024;
+        const SUPPORTED_VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg'];
 
         // 点击上传区域触发文件选择
         uploadArea.addEventListener('click', () => {
@@ -123,7 +161,8 @@
             resetVideoPreview();
             uploadVideo.style.display = 'none';
             uploadVideo.src = '';
-            alertBox.className = 'alert';
+            resetPreviewAlertState();
+            hideAlert();
         });
 
         fileInput.addEventListener('change', (e) => {
@@ -131,6 +170,33 @@
             if (!file) return;
             handleFile(file);
         });
+
+        function isSupportedVideoFile(file) {
+            if (!file || !file.name) {
+                return false;
+            }
+            const lowerName = file.name.toLowerCase();
+            return SUPPORTED_VIDEO_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
+        }
+
+        function validateVideoFile(file) {
+            if (!file) {
+                showAlert('请选择视频文件', 'error');
+                return false;
+            }
+
+            if (!isSupportedVideoFile(file)) {
+                showAlert('仅支持 MP4、AVI、MOV、MKV、WMV、FLV、WebM、M4V、MPG、MPEG 格式', 'error');
+                return false;
+            }
+
+            if (file.size > MAX_FILE_SIZE) {
+                showAlert('视频文件不能超过 500MB', 'error');
+                return false;
+            }
+
+            return true;
+        }
 
         function resetVideoPreview() {
             uploadVideo.onerror = null;
@@ -141,6 +207,111 @@
             }
         }
 
+        function resetPreviewAlertState() {
+            previewTranscoding = false;
+            previewTranscodeCompleted = false;
+            detectionStarted = false;
+        }
+
+        function updatePreviewAlert() {
+            if (previewTranscoding) {
+                showAlert('ffmpeg预览转码中，请稍后......', 'info');
+                return;
+            }
+
+            if (previewTranscodeCompleted && !detectionStarted) {
+                showAlert('预览转码完成，请点击开始检测', 'ready');
+                return;
+            }
+
+            hideAlert();
+        }
+
+        function hasUsableLocalPreview() {
+            return uploadVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+                uploadVideo.videoWidth > 0 &&
+                uploadVideo.videoHeight > 0;
+        }
+
+        function getPreviewState() {
+            return {
+                readyState: uploadVideo.readyState,
+                networkState: uploadVideo.networkState,
+                videoWidth: uploadVideo.videoWidth,
+                videoHeight: uploadVideo.videoHeight,
+                currentSrc: uploadVideo.currentSrc || uploadVideo.src || ''
+            };
+        }
+
+        function waitForLocalPreviewReady(file, timeoutMs = 3000) {
+            return new Promise((resolve, reject) => {
+                let settled = false;
+                let timer = null;
+
+                const cleanup = () => {
+                    uploadVideo.removeEventListener('loadeddata', onReady);
+                    uploadVideo.removeEventListener('canplay', onReady);
+                    uploadVideo.removeEventListener('playing', onReady);
+                    uploadVideo.removeEventListener('error', onError);
+                    if (timer) {
+                        clearTimeout(timer);
+                        timer = null;
+                    }
+                };
+
+                const finishResolve = (reason) => {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    cleanup();
+                    resolve(reason);
+                };
+
+                const finishReject = (reason) => {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    cleanup();
+                    const error = reason instanceof Error ? reason : new Error(String(reason));
+                    reject(error);
+                };
+
+                const onReady = (event) => {
+                    if (selectedFile !== file) {
+                        finishReject('当前文件已变化，取消本地预览等待');
+                        return;
+                    }
+                    if (hasUsableLocalPreview()) {
+                        finishResolve(event.type);
+                    }
+                };
+
+                const onError = () => {
+                    finishReject(new Error('video 元素触发 error 事件'));
+                };
+
+                uploadVideo.addEventListener('loadeddata', onReady);
+                uploadVideo.addEventListener('canplay', onReady);
+                uploadVideo.addEventListener('playing', onReady);
+                uploadVideo.addEventListener('error', onError);
+
+                if (hasUsableLocalPreview()) {
+                    finishResolve('immediate');
+                    return;
+                }
+
+                timer = setTimeout(() => {
+                    if (hasUsableLocalPreview()) {
+                        finishResolve('timeout-check');
+                    } else {
+                        finishReject(new Error('等待本地预览超时，未拿到可显示的视频帧'));
+                    }
+                }, timeoutMs);
+            });
+        }
+
         async function requestServerPreview(file, objectUrl) {
             uploadVideo.onerror = null;
             if (currentObjectUrl === objectUrl) {
@@ -148,7 +319,9 @@
                 currentObjectUrl = null;
             }
 
-            showAlert('当前格式浏览器不支持预览，正在转码请稍候...', 'info');
+            previewTranscoding = true;
+            previewTranscodeCompleted = false;
+            updatePreviewAlert();
             const fd = new FormData();
             fd.append('video', file);
 
@@ -162,8 +335,12 @@
                     uploadVideo.src = data.previewUrl;
                     uploadVideo.load();
                     await uploadVideo.play().catch(() => {});
-                    alertBox.className = 'alert';
+                    previewTranscoding = false;
+                    previewTranscodeCompleted = true;
+                    updatePreviewAlert();
                 } else {
+                    previewTranscoding = false;
+                    previewTranscodeCompleted = false;
                     showAlert('预览转码失败：' + data.message, 'error');
                     uploadVideo.style.display = 'none';
                     uploadPlaceholder.style.display = '';
@@ -172,6 +349,8 @@
                 if (selectedFile !== file) {
                     return;
                 }
+                previewTranscoding = false;
+                previewTranscodeCompleted = false;
                 showAlert('转码请求失败：' + err.message, 'error');
                 uploadVideo.style.display = 'none';
                 uploadPlaceholder.style.display = '';
@@ -179,7 +358,15 @@
         }
 
         async function handleFile(file) {
+            if (!validateVideoFile(file)) {
+                fileInput.value = '';
+                return;
+            }
+
             selectedFile = file;
+            resetPreviewAlertState();
+            previewTranscoding = true;
+            updatePreviewAlert();
             fileName.textContent = '文件名：' + file.name;
             fileSize.textContent = '大小：' + formatSize(file.size);
             fileInfo.classList.add('show');
@@ -209,8 +396,17 @@
             uploadVideo.load();
 
             try {
-                await uploadVideo.play();
-                alertBox.className = 'alert';
+                const playPromise = uploadVideo.play()
+                    .catch((err) => { throw err; });
+
+                await Promise.all([
+                    playPromise,
+                    waitForLocalPreviewReady(file)
+                ]);
+
+                previewTranscoding = false;
+                previewTranscodeCompleted = false;
+                updatePreviewAlert();
             } catch (err) {
                 if (selectedFile !== file) {
                     return;
@@ -225,23 +421,111 @@
             return (size / (1024 * 1024)).toFixed(2) + ' MB';
         }
 
+        function parseIntegerField(inputId, label, { min = null, allowZero = true } = {}) {
+            const rawValue = document.getElementById(inputId).value.trim();
+            if (rawValue === '') {
+                throw new Error(label + '不能为空');
+            }
+
+            const value = Number(rawValue);
+            if (!Number.isInteger(value)) {
+                throw new Error(label + '必须是整数');
+            }
+
+            if (!allowZero && value === 0) {
+                throw new Error(label + '不能为0');
+            }
+
+            if (min !== null && value < min) {
+                throw new Error(label + '不能小于' + min);
+            }
+
+            return String(value);
+        }
+
+        function parseThresholdField() {
+            const rawValue = document.getElementById('threshold').value.trim();
+            if (rawValue === '') {
+                throw new Error('判定阈值不能为空');
+            }
+
+            const value = Number(rawValue);
+            if (!Number.isFinite(value)) {
+                throw new Error('判定阈值必须是数字');
+            }
+
+            if (value < 0 || value > 1) {
+                throw new Error('判定阈值必须在0到1之间');
+            }
+
+            return String(value);
+        }
+
+        function getDetectionParams() {
+            return {
+                attnTopK: parseIntegerField('attnTopK', '热力图数量', { min: 1, allowZero: false }),
+                threshold: parseThresholdField(),
+                everyN: parseIntegerField('frameInterval', '抽帧间隔', { min: 0, allowZero: true })
+            };
+        }
+
         function showAlert(msg, type) {
+            if (alertHideTimer) {
+                clearTimeout(alertHideTimer);
+                alertHideTimer = null;
+            }
             alertBox.textContent = msg;
             alertBox.className = 'alert show alert-' + type;
         }
 
+        function hideAlert() {
+            if (alertHideTimer) {
+                clearTimeout(alertHideTimer);
+                alertHideTimer = null;
+            }
+            alertBox.textContent = '';
+            alertBox.className = 'alert';
+        }
+
         const loadingDiv = document.getElementById('loading');
-        const progressInfo = document.getElementById('progressInfo');
+        const loadingText = loadingDiv.querySelector('.loading-text');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+
+        function setProgress(percent, text) {
+            const safePercent = Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0));
+            progressContainer.classList.add('show');
+            progressFill.style.width = safePercent + '%';
+            progressFill.textContent = Math.round(safePercent) + '%';
+            if (text) {
+                loadingText.textContent = text;
+            }
+        }
 
         function setLoading(on) {
             if (on) {
                 loadingDiv.classList.add('show');
+                progressContainer.classList.add('show');
                 submitBtn.disabled = true;
                 uploadArea.classList.add('disabled');
+                clearFileBtn.disabled = true;
+                fileInput.disabled = true;
+                attnTopKInput.disabled = true;
+                thresholdInput.disabled = true;
+                frameIntervalInput.disabled = true;
             } else {
                 loadingDiv.classList.remove('show');
+                progressContainer.classList.remove('show');
+                progressFill.style.width = '0%';
+                progressFill.textContent = '0%';
+                loadingText.textContent = '正在分析视频，请稍候...';
                 submitBtn.disabled = false;
                 uploadArea.classList.remove('disabled');
+                clearFileBtn.disabled = false;
+                fileInput.disabled = false;
+                attnTopKInput.disabled = false;
+                thresholdInput.disabled = false;
+                frameIntervalInput.disabled = false;
             }
         }
 
@@ -253,26 +537,40 @@
                 return;
             }
 
+            let detectionParams;
+            try {
+                detectionParams = getDetectionParams();
+            } catch (err) {
+                detectionStarted = false;
+                showAlert(err.message, 'error');
+                return;
+            }
+
+            detectionStarted = true;
+            hideAlert();
+
             const formData = new FormData();
             formData.append('video', selectedFile);
-            formData.append('attnTopK', document.getElementById('attnTopK').value);
-            formData.append('threshold', document.getElementById('threshold').value);
-            formData.append('everyN', document.getElementById('frameInterval').value);
+            formData.append('attnTopK', detectionParams.attnTopK);
+            formData.append('threshold', detectionParams.threshold);
+            formData.append('everyN', detectionParams.everyN);
 
             setLoading(true);
-            progressInfo.textContent = '上传中...';
+            setProgress(5, '上传中...');
 
             try {
                 const res = await fetch('/upload', { method: 'POST', body: formData });
                 const data = await res.json();
 
                 if (!data.success) {
+                    detectionStarted = false;
+                    updatePreviewAlert();
                     showAlert('上传失败：' + data.message, 'error');
                     setLoading(false);
                     return;
                 }
 
-                progressInfo.textContent = '等待检测队列...';
+                setProgress(10, '等待检测队列...');
 
                 // 通过 SSE 等待异步检测结果
                 const evtSource = new EventSource('/progress/' + data.taskId);
@@ -281,31 +579,39 @@
                     const msg = JSON.parse(event.data);
 
                     if (msg.type === 'queued') {
-                        progressInfo.textContent = '排队中，前方还有 ' + msg.position + ' 个任务...';
+                        setProgress(12, '排队中，前方还有 ' + msg.position + ' 个任务...');
                     } else if (msg.type === 'start') {
-                        progressInfo.textContent = '正在分析...';
+                        setProgress(20, '正在分析...');
                     } else if (msg.type === 'progress') {
                         if (msg.frames && msg.total) {
-                            progressInfo.textContent = '已处理 ' + msg.frames + ' / ' + msg.total + ' 帧';
+                            const percent = 20 + (msg.frames / msg.total) * 75;
+                            setProgress(percent, '已处理 ' + msg.frames + ' / ' + msg.total + ' 帧');
                         } else {
-                            progressInfo.textContent = msg.message || '处理中...';
+                            setProgress(30, msg.message || '处理中...');
                         }
                     } else if (msg.type === 'complete') {
                         evtSource.close();
+                        setProgress(100, '检测完成，正在跳转结果页...');
                         const resultObj = JSON.parse(msg.result);
                         if (msg.attentionMapUrl) {
                             resultObj.attentionMapUrl = msg.attentionMapUrl;
                         }
                         sessionStorage.setItem('lastDetectionResult', JSON.stringify(resultObj));
                         sessionStorage.setItem('lastDetectionFilename', msg.filename || data.filename);
+                        sessionStorage.setItem('lastDetectionFilepath', data.filepath || msg.filepath || '');
                         sessionStorage.setItem('lastDetectionMeta', JSON.stringify({
                             detectEndTime: msg.detectEndTime,
                             queueDurationMs: msg.queueDurationMs,
-                            detectDurationMs: msg.detectDurationMs
+                            detectDurationMs: msg.detectDurationMs,
+                            attnTopK: msg.attnTopK,
+                            threshold: msg.threshold,
+                            everyN: msg.everyN
                         }));
                         window.location.href = '/result?filename=' + encodeURIComponent(msg.filename || data.filename);
                     } else if (msg.type === 'error') {
                         evtSource.close();
+                        detectionStarted = false;
+                        updatePreviewAlert();
                         showAlert('检测失败：' + msg.message, 'error');
                         setLoading(false);
                     }
@@ -313,11 +619,15 @@
 
                 evtSource.onerror = () => {
                     evtSource.close();
+                    detectionStarted = false;
+                    updatePreviewAlert();
                     showAlert('连接中断，请刷新页面重试', 'error');
                     setLoading(false);
                 };
 
             } catch (err) {
+                detectionStarted = false;
+                updatePreviewAlert();
                 showAlert('网络错误：' + err.message, 'error');
                 setLoading(false);
             }

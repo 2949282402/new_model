@@ -5,9 +5,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-/**
- * Web 配置类 - 静态资源映射
- */
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
@@ -16,15 +16,18 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        // 映射上传目录到 /uploads/ 路径
-        registry.addResourceHandler("/uploads/**")
-                .addResourceLocations("file:" + uploadDir);
+        Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
+        String uploadLocation = uploadPath.toUri().toString();
+        if (!uploadLocation.endsWith("/")) {
+            uploadLocation += "/";
+        }
 
-        // 默认静态资源
+        registry.addResourceHandler("/uploads/**")
+                .addResourceLocations(uploadLocation);
+
         registry.addResourceHandler("/static/**")
                 .addResourceLocations("classpath:/static/");
-        
-        // 处理 favicon.ico 请求，避免 NoResourceFoundException
+
         registry.addResourceHandler("/favicon.ico")
                 .addResourceLocations("classpath:/static/");
     }
