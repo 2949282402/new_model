@@ -4,11 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>检测结果 - AI生成视频检测系统</title>
+    <link rel="stylesheet" href="/static/css/screen-fit.css">
     <link rel="stylesheet" href="/static/css/result.css">
 </head>
-<body>
-<div class="container">
-    <div class="card fade-in">
+<body class="screen-fit-body">
+<div class="screen-fit-shell" data-screen-fit-shell data-screen-fit-mode="contain">
+    <div class="screen-fit-stage result-stage" data-screen-fit-stage data-screen-fit-ready="false">
+        <div class="container">
+            <div class="card fade-in">
         <div class="card-header-bar">
             <div class="card-header-left">
                 <button type="button" class="btn" id="backBtn">返回上一页</button>
@@ -124,9 +127,12 @@
         <div class="btn-container">
             <button type="button" class="btn" id="exportPdfBtn">导出PDF报告</button>
         </div>
+            </div>
+        </div>
     </div>
 </div>
 
+<script src="/static/js/screen-fit.js"></script>
 <script>
     function readSessionJson(key) {
         const raw = sessionStorage.getItem(key);

@@ -4,10 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>历史检测记录 - AI生成视频检测系统</title>
+    <link rel="stylesheet" href="/static/css/screen-fit.css">
     <link rel="stylesheet" href="/static/css/history.css">
 </head>
-<body>
-    <div class="container">
+<body class="screen-fit-body">
+    <div class="screen-fit-shell" data-screen-fit-shell data-screen-fit-mode="width">
+        <div class="screen-fit-stage history-stage" data-screen-fit-stage data-screen-fit-ready="false">
+            <div class="container">
         <div class="top-nav">
             <a href="/" class="btn">返回首页</a>
         </div>
@@ -90,8 +93,12 @@
             <p style="margin-top: 10px;">当前还没有可查看的历史结果</p>
             <a href="/" class="btn" style="margin-top: 20px;">开始检测</a>
         </div>
+            </div>
+        </div>
+        <div class="screen-fit-scroll-spacer" aria-hidden="true"></div>
     </div>
 
+    <script src="/static/js/screen-fit.js"></script>
     <script>
         const DETECTION_SESSION_KEYS = [
             'lastDetectionResult',

@@ -4,10 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI生成视频检测系统</title>
+    <link rel="stylesheet" href="/static/css/screen-fit.css">
     <link rel="stylesheet" href="/static/css/index.css">
 </head>
-<body>
-    <div class="container">
+<body class="screen-fit-body">
+    <div class="screen-fit-shell" data-screen-fit-shell>
+        <div class="screen-fit-stage index-stage" data-screen-fit-stage data-screen-fit-ready="false">
+            <div class="container">
         <div class="hero">
             <div class="hero-copy">
                 <h1>AI生成视频检测系统</h1>
@@ -102,8 +105,11 @@
                 </div>
             </div>
         </form>
+            </div>
+        </div>
     </div>
 
+    <script src="/static/js/screen-fit.js"></script>
     <script>
         const fileInput = document.getElementById('fileInput');
         const fileName = document.getElementById('fileName');
