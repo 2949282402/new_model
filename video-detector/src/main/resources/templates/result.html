@@ -7,467 +7,477 @@
     <link rel="stylesheet" href="/static/css/result.css">
 </head>
 <body>
-    <div class="container">
-        <div class="page-actions">
-            <button type="button" class="btn" id="backBtn">返回上一页</button>
-            <a href="/" class="btn">返回上传页面</a>
-        </div>
+<div class="container">
+    <div class="card fade-in">
+        <div class="card-header-bar">
+            <div class="card-header-left">
+                <button type="button" class="btn" id="backBtn">返回上一页</button>
+                <a href="/" class="btn">返回上传页面</a>
+            </div>
 
-        <div class="card fade-in">
             <h1>检测报告</h1>
 
-            <div class="result-header">
-                <div class="result-title" id="resultTitle">分析中...</div>
-                <div class="video-name-row">
-                    视频文件：<span id="videoName" class="video-name"></span>
-                </div>
-            </div>
+            <div class="card-header-right"></div>
+        </div>
 
-            <div class="info-section">
-                <div class="disclaimer">
-                    <h4>提示</h4>
-                    <p>本系统采用AI技术进行视频真伪鉴别，检测结果仅供参考。不对检测结果的准确性做出任何保证，建议结合其他手段综合判断。请理性看待检测结论，谨慎辨别视频内容。</p>
-                </div>
-
-                <div class="info-item probability-item">
-                    <div class="info-label">AI生成概率:</div>
-                    <div class="info-value">
-                        <div class="probability-bar">
-                            <div class="probability-fill" id="probabilityBar" style="width: 0%;">0%</div>
-                        </div>
-                        <div class="probability-text" id="probabilityText">0%</div>
-                        <div class="probability-note">概率映射说明：0.0-阈值映射为0%-50%，阈值-1.0映射为50%-100%。</div>
-                    </div>
-                </div>
-
-                <div class="info-grid">
-                    <div class="info-item">
-                        <div class="info-label">热力图数量:</div>
-                        <div class="info-value" id="attnTopKValue">-</div>
-                    </div>
-
-                    <div class="info-item">
-                        <div class="info-label">判定阈值:</div>
-                        <div class="info-value" id="thresholdValue">-</div>
-                    </div>
-
-                    <div class="info-item">
-                        <div class="info-label">抽帧间隔:</div>
-                        <div class="info-value" id="everyNValue">-</div>
-                    </div>
-
-                    <div class="info-item">
-                        <div class="info-label">检测结果:</div>
-                        <div class="info-value">
-                            <span class="badge" id="resultBadge">等待结果</span>
-                        </div>
-                    </div>
-
-                    <div class="info-item">
-                        <div class="info-label">分析帧数:</div>
-                        <div class="info-value" id="frameCount">-</div>
-                    </div>
-
-                    <div class="info-item">
-                        <div class="info-label">检测时间:</div>
-                        <div class="info-value" id="detectTime">-</div>
-                    </div>
-
-                    <div class="info-item">
-                        <div class="info-label">排队耗时:</div>
-                        <div class="info-value" id="queueDuration">-</div>
-                    </div>
-
-                    <div class="info-item">
-                        <div class="info-label">检测耗时:</div>
-                        <div class="info-value" id="detectDuration">-</div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="video-preview-section" id="videoPreviewSection" style="display: none;">
-                <div class="details-title">视频预览</div>
-                <div class="video-preview-frame">
-                    <div class="video-preview-placeholder" id="videoPreviewPlaceholder">正在加载视频预览...</div>
-                    <video id="resultVideo" class="result-video" controls playsinline preload="metadata" style="display: none;"></video>
-                </div>
-            </div>
-
-            <div class="attention-section" id="attentionSection" style="display: none;">
-                <div class="details-title">Attention热力图</div>
-                <button type="button" class="attention-image-button" id="attentionImageButton" aria-label="Open attention heatmap">
-                    <img id="attentionImage" class="attention-image" src="" alt="Attention heatmap">
-                </button>
-                <div class="attention-hint">点击图片放大查看</div>
-            </div>
-
-            <div class="image-modal" id="imageModal" aria-hidden="true">
-                <button type="button" class="close-btn" id="modalCloseBtn">关闭</button>
-                <img id="modalImage" src="" alt="Heatmap preview">
-            </div>
-
-            <div class="details-section">
-                <div class="details-title">详细分析</div>
-                <div class="details-content" id="detailsContent">等待结果...</div>
-            </div>
-
-            <div class="btn-container">
-                <button type="button" class="btn" id="exportPdfBtn">导出PDF报告</button>
+        <div class="result-header">
+            <div class="result-title" id="resultTitle">分析中...</div>
+            <div class="video-name-row">
+                视频文件：<span id="videoName" class="video-name"></span>
             </div>
         </div>
+
+        <div class="report-layout">
+            <div class="report-main">
+                <div class="info-section">
+                    <div class="disclaimer">
+                        <h4>提示</h4>
+                        <p>本系统采用AI技术进行视频真伪鉴别，检测结果仅供参考。不对检测结果的准确性做出任何保证，建议结合其他手段综合判断。请理性看待检测结论，谨慎辨别视频内容。</p>
+                    </div>
+
+                    <div class="info-item probability-item">
+                        <div class="info-label">AI生成概率:</div>
+                        <div class="info-value">
+                            <div class="probability-bar">
+                                <div class="probability-fill" id="probabilityBar" style="width: 0%;">0%</div>
+                            </div>
+                            <div class="probability-text" id="probabilityText">0%</div>
+                            <div class="probability-note">概率映射说明：0.0-阈值映射为0%-50%，阈值-1.0映射为50%-100%。</div>
+                        </div>
+                    </div>
+
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="info-label">热力图数量:</div>
+                            <div class="info-value" id="attnTopKValue">-</div>
+                        </div>
+
+                        <div class="info-item">
+                            <div class="info-label">判定阈值:</div>
+                            <div class="info-value" id="thresholdValue">-</div>
+                        </div>
+
+                        <div class="info-item">
+                            <div class="info-label">抽帧间隔:</div>
+                            <div class="info-value" id="everyNValue">-</div>
+                        </div>
+
+                        <div class="info-item">
+                            <div class="info-label">检测结果:</div>
+                            <div class="info-value">
+                                <span class="badge" id="resultBadge">等待结果</span>
+                            </div>
+                        </div>
+
+                        <div class="info-item">
+                            <div class="info-label">分析帧数:</div>
+                            <div class="info-value" id="frameCount">-</div>
+                        </div>
+
+                        <div class="info-item">
+                            <div class="info-label">检测时间:</div>
+                            <div class="info-value" id="detectTime">-</div>
+                        </div>
+
+                        <div class="info-item">
+                            <div class="info-label">排队耗时:</div>
+                            <div class="info-value" id="queueDuration">-</div>
+                        </div>
+
+                        <div class="info-item">
+                            <div class="info-label">检测耗时:</div>
+                            <div class="info-value" id="detectDuration">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="video-preview-section" id="videoPreviewSection" style="display: none;">
+                    <div class="details-title">视频预览</div>
+                    <div class="video-preview-frame">
+                        <div class="video-preview-placeholder" id="videoPreviewPlaceholder">正在加载视频预览...</div>
+                        <video id="resultVideo" class="result-video" controls playsinline preload="metadata" style="display: none;"></video>
+                    </div>
+                </div>
+            </div>
+
+            <div class="report-side">
+                <div class="attention-section" id="attentionSection" style="display: none;">
+                    <div class="details-title">Attention热力图</div>
+                    <button type="button" class="attention-image-button" id="attentionImageButton" aria-label="Open attention heatmap">
+                        <img id="attentionImage" class="attention-image" src="" alt="Attention heatmap">
+                    </button>
+                    <div class="attention-hint">点击图片放大查看</div>
+                </div>
+
+                <div class="details-section">
+                    <div class="details-title">详细分析</div>
+                    <div class="details-content" id="detailsContent">等待结果...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="image-modal" id="imageModal" aria-hidden="true">
+            <button type="button" class="close-btn" id="modalCloseBtn">关闭</button>
+            <img id="modalImage" src="" alt="Heatmap preview">
+        </div>
+
+        <div class="btn-container">
+            <button type="button" class="btn" id="exportPdfBtn">导出PDF报告</button>
+        </div>
     </div>
+</div>
 
-    <script>
-        function readSessionJson(key) {
-            const raw = sessionStorage.getItem(key);
-            if (!raw) {
-                return null;
-            }
-            try {
-                return JSON.parse(raw);
-            } catch (error) {
-                console.error('Failed to parse session JSON:', key, error);
-                return null;
-            }
-        }
-
-        const resultTextMap = {
-            real: '真实视频',
-            ai: 'AI生成视频',
-            unknownFile: '未知文件',
-            seconds: '秒',
-            noDetails: '无详细信息',
-            detectFailed: '检测失败',
-            noResult: '未获取到结果'
-        };
-
-        const urlParams = new URLSearchParams(window.location.search);
-        const filename = urlParams.get('filename');
-        const filepath = sessionStorage.getItem('lastDetectionFilepath') || urlParams.get('filepath') || '';
-        const resultData = readSessionJson('lastDetectionResult');
-        const metaData = readSessionJson('lastDetectionMeta');
-        const storedAttentionPath = sessionStorage.getItem('attentionMapPath');
-        const storedFilename = sessionStorage.getItem('lastDetectionFilename');
-
-        const resultTitle = document.getElementById('resultTitle');
-        const videoName = document.getElementById('videoName');
-        const probabilityBar = document.getElementById('probabilityBar');
-        const probabilityText = document.getElementById('probabilityText');
-        const resultBadge = document.getElementById('resultBadge');
-        const frameCount = document.getElementById('frameCount');
-        const detectTime = document.getElementById('detectTime');
-        const queueDuration = document.getElementById('queueDuration');
-        const detectDuration = document.getElementById('detectDuration');
-        const attnTopKValue = document.getElementById('attnTopKValue');
-        const thresholdValue = document.getElementById('thresholdValue');
-        const everyNValue = document.getElementById('everyNValue');
-        const detailsContent = document.getElementById('detailsContent');
-        const attentionSection = document.getElementById('attentionSection');
-        const attentionImageButton = document.getElementById('attentionImageButton');
-        const attentionImage = document.getElementById('attentionImage');
-        const imageModal = document.getElementById('imageModal');
-        const modalImage = document.getElementById('modalImage');
-        const modalCloseBtn = document.getElementById('modalCloseBtn');
-        const videoPreviewSection = document.getElementById('videoPreviewSection');
-        const videoPreviewPlaceholder = document.getElementById('videoPreviewPlaceholder');
-        const resultVideo = document.getElementById('resultVideo');
-
-        videoName.textContent = filename || storedFilename || resultTextMap.unknownFile;
-
-        function isAiResult(resultValue) {
-            if (!resultValue) {
-                return null;
-            }
-            const normalized = String(resultValue).trim().toLowerCase();
-            if (normalized.includes('ai')) {
-                return true;
-            }
-            if (normalized.includes('真实')) {
-                return false;
-            }
+<script>
+    function readSessionJson(key) {
+        const raw = sessionStorage.getItem(key);
+        if (!raw) {
             return null;
         }
+        try {
+            return JSON.parse(raw);
+        } catch (error) {
+            console.error('Failed to parse session JSON:', key, error);
+            return null;
+        }
+    }
 
-        function formatDuration(ms) {
-            if (ms === null || ms === undefined || ms === '') {
-                return '-';
-            }
-            const seconds = Math.floor(Number(ms) / 1000);
-            return Number.isFinite(seconds) ? (seconds + ' ' + resultTextMap.seconds) : '-';
+    const resultTextMap = {
+        real: '真实视频',
+        ai: 'AI生成视频',
+        unknownFile: '未知文件',
+        seconds: '秒',
+        noDetails: '无详细信息',
+        detectFailed: '检测失败',
+        noResult: '未获取到结果'
+    };
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const filename = urlParams.get('filename');
+    const filepath = sessionStorage.getItem('lastDetectionFilepath') || urlParams.get('filepath') || '';
+    const resultData = readSessionJson('lastDetectionResult');
+    const metaData = readSessionJson('lastDetectionMeta');
+    const storedAttentionPath = sessionStorage.getItem('attentionMapPath');
+    const storedFilename = sessionStorage.getItem('lastDetectionFilename');
+
+    const resultTitle = document.getElementById('resultTitle');
+    const videoName = document.getElementById('videoName');
+    const probabilityBar = document.getElementById('probabilityBar');
+    const probabilityText = document.getElementById('probabilityText');
+    const resultBadge = document.getElementById('resultBadge');
+    const frameCount = document.getElementById('frameCount');
+    const detectTime = document.getElementById('detectTime');
+    const queueDuration = document.getElementById('queueDuration');
+    const detectDuration = document.getElementById('detectDuration');
+    const attnTopKValue = document.getElementById('attnTopKValue');
+    const thresholdValue = document.getElementById('thresholdValue');
+    const everyNValue = document.getElementById('everyNValue');
+    const detailsContent = document.getElementById('detailsContent');
+    const attentionSection = document.getElementById('attentionSection');
+    const attentionImageButton = document.getElementById('attentionImageButton');
+    const attentionImage = document.getElementById('attentionImage');
+    const imageModal = document.getElementById('imageModal');
+    const modalImage = document.getElementById('modalImage');
+    const modalCloseBtn = document.getElementById('modalCloseBtn');
+    const videoPreviewSection = document.getElementById('videoPreviewSection');
+    const videoPreviewPlaceholder = document.getElementById('videoPreviewPlaceholder');
+    const resultVideo = document.getElementById('resultVideo');
+
+    videoName.textContent = filename || storedFilename || resultTextMap.unknownFile;
+
+    function isAiResult(resultValue) {
+        if (!resultValue) {
+            return null;
+        }
+        const normalized = String(resultValue).trim().toLowerCase();
+        if (normalized.includes('ai')) {
+            return true;
+        }
+        if (normalized.includes('真实')) {
+            return false;
+        }
+        return null;
+    }
+
+    function formatDuration(ms) {
+        if (ms === null || ms === undefined || ms === '') {
+            return '-';
+        }
+        const seconds = Math.floor(Number(ms) / 1000);
+        return Number.isFinite(seconds) ? (seconds + ' ' + resultTextMap.seconds) : '-';
+    }
+
+    function formatThreshold(value) {
+        if (value === null || value === undefined || value === '') {
+            return '-';
+        }
+        const num = Number(value);
+        return Number.isFinite(num) ? num.toFixed(2) : '-';
+    }
+
+    function extractManagedUploadUrl(rawPath, fallbackToOriginal) {
+        if (!rawPath) {
+            return '';
         }
 
-        function formatThreshold(value) {
-            if (value === null || value === undefined || value === '') {
-                return '-';
-            }
-            const num = Number(value);
-            return Number.isFinite(num) ? num.toFixed(2) : '-';
+        const normalized = String(rawPath).trim().replace(/\\/g, '/');
+        if (!normalized) {
+            return '';
         }
 
-        function extractManagedUploadUrl(rawPath, fallbackToOriginal) {
-            if (!rawPath) {
-                return '';
-            }
-
-            const normalized = String(rawPath).trim().replace(/\\/g, '/');
-            if (!normalized) {
-                return '';
-            }
-
-            if (normalized.startsWith('/uploads/')) {
-                return normalized.replace(/\/{2,}/g, '/');
-            }
-
-            const uploadsIndex = normalized.lastIndexOf('/uploads/');
-            if (uploadsIndex >= 0) {
-                return normalized.substring(uploadsIndex).replace(/\/{2,}/g, '/');
-            }
-
-            const bareUploadsIndex = normalized.lastIndexOf('uploads/');
-            if (bareUploadsIndex >= 0) {
-                return ('/' + normalized.substring(bareUploadsIndex)).replace(/\/{2,}/g, '/');
-            }
-
-            return fallbackToOriginal ? normalized : '';
+        if (normalized.startsWith('/uploads/')) {
+            return normalized.replace(/\/{2,}/g, '/');
         }
 
-        function normalizeAttentionUrl(rawPath) {
-            return extractManagedUploadUrl(rawPath, true);
+        const uploadsIndex = normalized.lastIndexOf('/uploads/');
+        if (uploadsIndex >= 0) {
+            return normalized.substring(uploadsIndex).replace(/\/{2,}/g, '/');
         }
 
-        function normalizeVideoUrl(rawPath) {
-            return extractManagedUploadUrl(rawPath, false);
+        const bareUploadsIndex = normalized.lastIndexOf('uploads/');
+        if (bareUploadsIndex >= 0) {
+            return ('/' + normalized.substring(bareUploadsIndex)).replace(/\/{2,}/g, '/');
         }
 
-        function preferRasterAttentionUrl(url) {
-            return url && url.toLowerCase().endsWith('.svg')
-                ? url.replace(/\.svg$/i, '.png')
-                : url;
+        return fallbackToOriginal ? normalized : '';
+    }
+
+    function normalizeAttentionUrl(rawPath) {
+        return extractManagedUploadUrl(rawPath, true);
+    }
+
+    function normalizeVideoUrl(rawPath) {
+        return extractManagedUploadUrl(rawPath, false);
+    }
+
+    function preferRasterAttentionUrl(url) {
+        return url && url.toLowerCase().endsWith('.svg')
+            ? url.replace(/\.svg$/i, '.png')
+            : url;
+    }
+
+    function closeImageModal() {
+        imageModal.classList.remove('show');
+        imageModal.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('modal-open');
+    }
+
+    function openImageModal(src) {
+        if (!src) {
+            return;
         }
+        modalImage.src = src;
+        imageModal.classList.add('show');
+        imageModal.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('modal-open');
+    }
 
-        function closeImageModal() {
-            imageModal.classList.remove('show');
-            imageModal.setAttribute('aria-hidden', 'true');
-            document.body.classList.remove('modal-open');
-        }
+    function showVideoPlaceholder(message) {
+        videoPreviewSection.style.display = '';
+        videoPreviewPlaceholder.textContent = message;
+        videoPreviewPlaceholder.style.display = 'flex';
+        resultVideo.style.display = 'none';
+    }
 
-        function openImageModal(src) {
-            if (!src) {
-                return;
-            }
-            modalImage.src = src;
-            imageModal.classList.add('show');
-            imageModal.setAttribute('aria-hidden', 'false');
-            document.body.classList.add('modal-open');
-        }
+    function showVideoElement() {
+        videoPreviewSection.style.display = '';
+        videoPreviewPlaceholder.style.display = 'none';
+        resultVideo.style.display = 'block';
+    }
 
-        function showVideoPlaceholder(message) {
-            videoPreviewSection.style.display = '';
-            videoPreviewPlaceholder.textContent = message;
-            videoPreviewPlaceholder.style.display = 'flex';
-            resultVideo.style.display = 'none';
-        }
+    function waitForVideoReady(videoElement, timeoutMs = 3500) {
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            let timer = null;
 
-        function showVideoElement() {
-            videoPreviewSection.style.display = '';
-            videoPreviewPlaceholder.style.display = 'none';
-            resultVideo.style.display = 'block';
-        }
-
-        function waitForVideoReady(videoElement, timeoutMs = 3500) {
-            return new Promise((resolve, reject) => {
-                let settled = false;
-                let timer = null;
-
-                const cleanup = () => {
-                    videoElement.removeEventListener('loadeddata', onReady);
-                    videoElement.removeEventListener('canplay', onReady);
-                    videoElement.removeEventListener('error', onError);
-                    if (timer) {
-                        clearTimeout(timer);
-                        timer = null;
-                    }
-                };
-
-                const finishResolve = () => {
-                    if (settled) {
-                        return;
-                    }
-                    settled = true;
-                    cleanup();
-                    resolve();
-                };
-
-                const finishReject = (reason) => {
-                    if (settled) {
-                        return;
-                    }
-                    settled = true;
-                    cleanup();
-                    reject(reason instanceof Error ? reason : new Error(String(reason)));
-                };
-
-                const onReady = () => {
-                    if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
-                        finishResolve();
-                    }
-                };
-
-                const onError = () => finishReject(new Error('video load error'));
-
-                videoElement.addEventListener('loadeddata', onReady);
-                videoElement.addEventListener('canplay', onReady);
-                videoElement.addEventListener('error', onError);
-                timer = setTimeout(() => finishReject(new Error('video load timeout')), timeoutMs);
-            });
-        }
-
-        async function loadPreviewSource(src) {
-            resultVideo.pause();
-            resultVideo.removeAttribute('src');
-            resultVideo.load();
-            resultVideo.src = src;
-            resultVideo.load();
-            await waitForVideoReady(resultVideo);
-            showVideoElement();
-        }
-
-        async function requestStoredPreview(filePathValue) {
-            const formData = new FormData();
-            formData.append('path', filePathValue);
-            const response = await fetch('/preview/stored', {
-                method: 'POST',
-                body: formData
-            });
-            const data = await response.json();
-            if (!response.ok || !data.success || !data.previewUrl) {
-                throw new Error(data.message || 'preview unavailable');
-            }
-            return data.previewUrl;
-        }
-
-        async function initVideoPreview() {
-            if (!filepath) {
-                videoPreviewSection.style.display = 'none';
-                return;
-            }
-
-            const directUrl = normalizeVideoUrl(filepath);
-            if (!directUrl) {
-                videoPreviewSection.style.display = 'none';
-                return;
-            }
-
-            showVideoPlaceholder('正在加载视频预览...');
-
-            try {
-                await loadPreviewSource(directUrl);
-                return;
-            } catch (error) {
-                console.warn('Direct video preview unavailable, fallback to transcoded preview.', error);
-            }
-
-            showVideoPlaceholder('浏览器不支持直接播放，正在生成预览...');
-            try {
-                const previewUrl = await requestStoredPreview(filepath);
-                await loadPreviewSource(previewUrl);
-            } catch (error) {
-                console.error('Failed to load report video preview:', error);
-                showVideoPlaceholder('视频预览不可用');
-            }
-        }
-
-        function bindAttentionImage(rawAttentionPath) {
-            const normalizedUrl = normalizeAttentionUrl(rawAttentionPath);
-            if (!normalizedUrl) {
-                attentionSection.style.display = 'none';
-                attentionImageButton.disabled = true;
-                attentionImage.removeAttribute('src');
-                return;
-            }
-
-            const primaryUrl = preferRasterAttentionUrl(normalizedUrl);
-            let fallbackTried = false;
-
-            attentionSection.style.display = 'none';
-            attentionImageButton.disabled = true;
-
-            attentionImage.onload = () => {
-                attentionSection.style.display = '';
-                attentionImageButton.disabled = false;
+            const cleanup = () => {
+                videoElement.removeEventListener('loadeddata', onReady);
+                videoElement.removeEventListener('canplay', onReady);
+                videoElement.removeEventListener('error', onError);
+                if (timer) {
+                    clearTimeout(timer);
+                    timer = null;
+                }
             };
 
-            attentionImage.onerror = () => {
-                if (!fallbackTried && primaryUrl !== normalizedUrl) {
-                    fallbackTried = true;
-                    attentionImage.src = normalizedUrl;
+            const finishResolve = () => {
+                if (settled) {
                     return;
                 }
-                attentionSection.style.display = 'none';
-                attentionImageButton.disabled = true;
+                settled = true;
+                cleanup();
+                resolve();
             };
 
-            attentionImageButton.onclick = () => {
-                openImageModal(attentionImage.currentSrc || attentionImage.src);
+            const finishReject = (reason) => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                cleanup();
+                reject(reason instanceof Error ? reason : new Error(String(reason)));
             };
 
-            attentionImage.src = primaryUrl;
+            const onReady = () => {
+                if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
+                    finishResolve();
+                }
+            };
+
+            const onError = () => finishReject(new Error('video load error'));
+
+            videoElement.addEventListener('loadeddata', onReady);
+            videoElement.addEventListener('canplay', onReady);
+            videoElement.addEventListener('error', onError);
+            timer = setTimeout(() => finishReject(new Error('video load timeout')), timeoutMs);
+        });
+    }
+
+    async function loadPreviewSource(src) {
+        resultVideo.pause();
+        resultVideo.removeAttribute('src');
+        resultVideo.load();
+        resultVideo.src = src;
+        resultVideo.load();
+        await waitForVideoReady(resultVideo);
+        showVideoElement();
+    }
+
+    async function requestStoredPreview(filePathValue) {
+        const formData = new FormData();
+        formData.append('path', filePathValue);
+        const response = await fetch('/preview/stored', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success || !data.previewUrl) {
+            throw new Error(data.message || 'preview unavailable');
         }
+        return data.previewUrl;
+    }
 
-        modalCloseBtn.addEventListener('click', closeImageModal);
-        imageModal.addEventListener('click', (event) => {
-            if (event.target === imageModal) {
-                closeImageModal();
-            }
-        });
-        document.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape' && imageModal.classList.contains('show')) {
-                closeImageModal();
-            }
-        });
-
-        if (resultData && resultData.success) {
-            const probability = parseFloat(resultData.probability) || 0;
-            const percent = (probability * 100).toFixed(2);
-
-            probabilityBar.style.width = percent + '%';
-            probabilityBar.textContent = parseFloat(percent) >= 12 ? percent + '%' : '';
-            probabilityText.textContent = percent + '%';
-
-            const aiResult = isAiResult(resultData.result);
-            const isAi = aiResult !== null ? aiResult : probability >= 0.5;
-            resultTitle.textContent = isAi ? resultTextMap.ai : resultTextMap.real;
-            resultBadge.textContent = isAi ? resultTextMap.ai : resultTextMap.real;
-            resultBadge.classList.add(isAi ? 'badge-ai' : 'badge-real');
-
-            frameCount.textContent = resultData.frames || '-';
-            detailsContent.textContent = resultData.details || resultTextMap.noDetails;
-
-            if (metaData) {
-                detectTime.textContent = metaData.detectEndTime || '-';
-                queueDuration.textContent = formatDuration(metaData.queueDurationMs);
-                detectDuration.textContent = formatDuration(metaData.detectDurationMs);
-                attnTopKValue.textContent = metaData.attnTopK ?? '-';
-                thresholdValue.textContent = formatThreshold(metaData.threshold);
-                everyNValue.textContent = metaData.everyN ?? '-';
-            }
-
-            bindAttentionImage(
-                resultData.attentionMapUrl ||
-                resultData.attentionMapPath ||
-                storedAttentionPath ||
-                ''
-            );
-            initVideoPreview();
-        } else {
-            resultTitle.textContent = resultTextMap.detectFailed;
-            detailsContent.textContent = resultTextMap.noResult;
-            attentionSection.style.display = 'none';
+    async function initVideoPreview() {
+        if (!filepath) {
             videoPreviewSection.style.display = 'none';
+            return;
         }
 
-        document.getElementById('backBtn').addEventListener('click', () => history.back());
-        document.getElementById('exportPdfBtn').addEventListener('click', () => window.print());
-    </script>
+        const directUrl = normalizeVideoUrl(filepath);
+        if (!directUrl) {
+            videoPreviewSection.style.display = 'none';
+            return;
+        }
+
+        showVideoPlaceholder('正在加载视频预览...');
+
+        try {
+            await loadPreviewSource(directUrl);
+            return;
+        } catch (error) {
+            console.warn('Direct video preview unavailable, fallback to transcoded preview.', error);
+        }
+
+        showVideoPlaceholder('浏览器不支持直接播放，正在生成预览...');
+        try {
+            const previewUrl = await requestStoredPreview(filepath);
+            await loadPreviewSource(previewUrl);
+        } catch (error) {
+            console.error('Failed to load report video preview:', error);
+            showVideoPlaceholder('视频预览不可用');
+        }
+    }
+
+    function bindAttentionImage(rawAttentionPath) {
+        const normalizedUrl = normalizeAttentionUrl(rawAttentionPath);
+        if (!normalizedUrl) {
+            attentionSection.style.display = 'none';
+            attentionImageButton.disabled = true;
+            attentionImage.removeAttribute('src');
+            return;
+        }
+
+        const primaryUrl = preferRasterAttentionUrl(normalizedUrl);
+        let fallbackTried = false;
+
+        attentionSection.style.display = 'none';
+        attentionImageButton.disabled = true;
+
+        attentionImage.onload = () => {
+            attentionSection.style.display = '';
+            attentionImageButton.disabled = false;
+        };
+
+        attentionImage.onerror = () => {
+            if (!fallbackTried && primaryUrl !== normalizedUrl) {
+                fallbackTried = true;
+                attentionImage.src = normalizedUrl;
+                return;
+            }
+            attentionSection.style.display = 'none';
+            attentionImageButton.disabled = true;
+        };
+
+        attentionImageButton.onclick = () => {
+            openImageModal(attentionImage.currentSrc || attentionImage.src);
+        };
+
+        attentionImage.src = primaryUrl;
+    }
+
+    modalCloseBtn.addEventListener('click', closeImageModal);
+    imageModal.addEventListener('click', (event) => {
+        if (event.target === imageModal) {
+            closeImageModal();
+        }
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && imageModal.classList.contains('show')) {
+            closeImageModal();
+        }
+    });
+
+    if (resultData && resultData.success) {
+        const probability = parseFloat(resultData.probability) || 0;
+        const percent = (probability * 100).toFixed(2);
+
+        probabilityBar.style.width = percent + '%';
+        probabilityBar.textContent = parseFloat(percent) >= 12 ? percent + '%' : '';
+        probabilityText.textContent = percent + '%';
+
+        const aiResult = isAiResult(resultData.result);
+        const isAi = aiResult !== null ? aiResult : probability >= 0.5;
+        resultTitle.textContent = isAi ? resultTextMap.ai : resultTextMap.real;
+        resultBadge.textContent = isAi ? resultTextMap.ai : resultTextMap.real;
+        resultBadge.classList.add(isAi ? 'badge-ai' : 'badge-real');
+
+        frameCount.textContent = resultData.frames || '-';
+        detailsContent.textContent = resultData.details || resultTextMap.noDetails;
+
+        if (metaData) {
+            detectTime.textContent = metaData.detectEndTime || '-';
+            queueDuration.textContent = formatDuration(metaData.queueDurationMs);
+            detectDuration.textContent = formatDuration(metaData.detectDurationMs);
+            attnTopKValue.textContent = metaData.attnTopK ?? '-';
+            thresholdValue.textContent = formatThreshold(metaData.threshold);
+            everyNValue.textContent = metaData.everyN ?? '-';
+        }
+
+        bindAttentionImage(
+            resultData.attentionMapUrl ||
+            resultData.attentionMapPath ||
+            storedAttentionPath ||
+            ''
+        );
+        initVideoPreview();
+    } else {
+        resultTitle.textContent = resultTextMap.detectFailed;
+        detailsContent.textContent = resultTextMap.noResult;
+        attentionSection.style.display = 'none';
+        videoPreviewSection.style.display = 'none';
+    }
+
+    document.getElementById('backBtn').addEventListener('click', () => history.back());
+    document.getElementById('exportPdfBtn').addEventListener('click', () => window.print());
+</script>
 </body>
 </html>
