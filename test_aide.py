@@ -100,7 +100,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ckpt", type=str,
                         default=r"C:\hejulian\progan_train.pth",
                         help="AIDE 权重路径")
-    parser.add_argument("--batch_size", type=int, default=32, help="推理批大小")
+    parser.add_argument("--batch_size", type=int, default=1, help="推理批大小 (ConvNeXt-XXL极大, 建议1-4)")
     parser.add_argument("--output_dir", type=str, default=r"C:\hejulian\exp\aide_baseline",
                         help="结果输出目录")
     parser.add_argument("--threshold", type=float, default=0.5, help="分类阈值")
@@ -136,7 +136,21 @@ def load_aide_model(ckpt_path: str, device: torch.device) -> nn.Module:
     model.eval()
     model.to(device)
     sys.path.remove(str(AIDE_DIR))
-    print(f"[AIDE] 模型加载完成: {ckpt_path}")
+    # 显存使用提示
+    if device.type == "cuda":
+        allocated = torch.cuda.memory_allocated(device) / 1024**3
+        reserved = torch.cuda.memory_reserved(device) / 1024**3
+        props = torch.cuda.get_device_properties(device)
+        total = getattr(props, "total_memory", None)
+        if total is None:
+            total = getattr(props, "total_mem")
+        total = total / 1024**3
+        print(f"[AIDE] 模型加载完成: {ckpt_path}")
+        print(f"[GPU] 显存: 已分配 {allocated:.1f}GB / 已预留 {reserved:.1f}GB / 总计 {total:.1f}GB")
+        if allocated > total * 0.8:
+            print(f"[警告] 显存占用已超80%, 推理时可能 OOM, 请减小 batch_size")
+    else:
+        print(f"[AIDE] 模型加载完成: {ckpt_path}")
     return model
 
 
@@ -329,7 +343,24 @@ def infer_one_video(
                 continue
 
             batch = torch.stack(batch_tensors, dim=0).to(device, non_blocking=True)
-            logits = model(batch)
+            try:
+                logits = model(batch)
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                print(f"\n[OOM] 显存不足! 当前 batch_size={len(batch_tensors)}, "
+                      f"请用 --batch_size 1 重试")
+                # 逐张推理作为回退
+                for idx, single_path in enumerate(valid_paths):
+                    try:
+                        single_batch = batch[idx:idx+1]
+                        single_logits = model(single_batch)
+                        single_prob = softmax(single_logits.float().cpu().numpy(), axis=1)[:, 1]
+                        frame_results.append((str(single_path), float(single_prob[0])))
+                    except torch.cuda.OutOfMemoryError:
+                        torch.cuda.empty_cache()
+                        print(f"[OOM] 即使 batch_size=1 也 OOM, 请检查 GPU 显存是否足够运行 ConvNeXt-XXL")
+                        break
+                continue
             probs = softmax(logits.float().cpu().numpy(), axis=1)[:, 1]
 
             for p_path, prob in zip(valid_paths, probs):
@@ -548,6 +579,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[设备] {device}")
 
+    print("[AIDE] 正在加载模型 (含 ConvNeXt-XXL, 可能需要较长时间)...")
+    print("[AIDE] 如果长时间卡在此步, 可能是 open_clip 在下载模型权重, 请检查网络")
     model = load_aide_model(args.ckpt, device)
     dct_module = load_dct_module()
 

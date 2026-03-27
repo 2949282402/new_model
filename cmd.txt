@@ -46,6 +46,13 @@ python test_thesis.py --exp_name exp9
 python train_thesis.py --exp_name exp10 --no-use_hfri --use_temporal --fusion_mode independent --no-use_srm --focal_gamma 0 --label_smoothing 0
 python test_thesis.py --exp_name exp10
 
+python train_thesis.py --exp_name exp8_alpha075 --use_hfri --use_temporal --fusion_mode cross_attention --no-use_srm --focal_gamma 2.0 --focal_alpha 0.75 --label_smoothing 0.1
+python test_thesis.py --exp_name exp8_alpha075
+
+
+python train_thesis.py --exp_name exp8_alpha0.5 --use_hfri --use_temporal --fusion_mode cross_attention --no-use_srm --focal_gamma 2.0 --focal_alpha 0.75 --label_smoothing 0.1
+python test_thesis.py --exp_name exp8_alpha0.5
+
 # 最终消融链（以 ACC 为主）：exp1(Baseline) → exp10(+FlowFormer+Independent) → exp7(+CrossAttention) → exp9(+FocalLoss) → exp8(+HFRI)
 
 # ============ 压缩鲁棒性实验（exp8 模型在不同 JPEG 压缩质量下的表现） ============

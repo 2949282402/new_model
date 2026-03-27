@@ -1487,6 +1487,7 @@ def main() -> None:
         num_workers=args.num_workers,
         pin_memory=(device.type == "cuda"),
         drop_last=False,
+        persistent_workers=(args.num_workers > 0),
     )
     val_loader = (
         DataLoader(
@@ -1496,6 +1497,7 @@ def main() -> None:
             num_workers=args.num_workers,
             pin_memory=(device.type == "cuda"),
             drop_last=False,
+            persistent_workers=(args.num_workers > 0),
         )
         if val_dataset is not None
         else None
