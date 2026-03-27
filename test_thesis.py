@@ -1361,7 +1361,8 @@ def main() -> None:
             group_video_data[group_model]["labels"].append(float(label))
 
             # Save immediately after each processed video.
-            frame_writer.writerows(frame_batch_rows)
+            for _row in frame_batch_rows:
+                frame_writer.writerow(_row)
             video_writer.writerow(video_row)
             frame_f.flush()
             video_f.flush()
